@@ -46,8 +46,24 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        # Auto-migrate: add new columns to existing tables
+        _auto_migrate(app)
 
     return app
+
+def _auto_migrate(app):
+    """Add missing columns to existing tables (safe to run multiple times)."""
+    migrations = [
+        ("prospects", "bounce_count", "INTEGER DEFAULT 0"),
+        ("email_logs", "error_message", "TEXT"),
+    ]
+    with db.engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+            except Exception:
+                conn.rollback()  # Column already exists, ignore
 
 app = create_app()
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
