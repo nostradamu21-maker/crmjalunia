@@ -32,6 +32,7 @@ const STATUSES=[
 {id:"not_interested",label:"Pas intéressé",emoji:"❌",color:"#EF4444",bg:"#FEF2F2"},
 {id:"follow_up",label:"À recontacter",emoji:"💤",color:"#6B7280",bg:"#F3F4F6"},
 {id:"unsubscribed",label:"Désabonné",emoji:"🚫",color:"#9CA3AF",bg:"#F9FAFB"},
+{id:"bounced",label:"Bounced",emoji:"💥",color:"#DC2626",bg:"#FEF2F2"},
 ];
 const PIPELINE=["new","email_sent","replied","meeting","converted"];
 const statusOf=id=>STATUSES.find(s=>s.id===id)||STATUSES[0];
@@ -322,7 +323,139 @@ function ProspectDetail({prospectId,onBack,onRefresh}){
   );
 }
 
-// ─── Settings ────────────────────────────────────────────────────────────────
+// --- Campaign View -----------------------------------------------------------
+function CampaignView(){
+  const[stats,setStats]=useState(null);
+  const[loading,setLoading]=useState(true);
+  const[running,setRunning]=useState(false);
+  const[result,setResult]=useState(null);
+  const[tpl,setTpl]=useState({email1Sujet:"",email1Corps:"",email2Sujet:"",email2Corps:"",email3Sujet:"",email3Corps:""});
+  const[applying,setApplying]=useState(false);
+  const[applyResult,setApplyResult]=useState(null);
+
+  const loadStats=()=>{api("/campaign/stats").then(setStats).catch(()=>{}).finally(()=>setLoading(false));};
+  useEffect(()=>{loadStats();
+    api("/settings").then(s=>{
+      setTpl({email1Sujet:s.tpl_email1_sujet||"",email1Corps:s.tpl_email1_corps||"",
+        email2Sujet:s.tpl_email2_sujet||"",email2Corps:s.tpl_email2_corps||"",
+        email3Sujet:s.tpl_email3_sujet||"",email3Corps:s.tpl_email3_corps||""});
+    }).catch(()=>{});
+  },[]);
+
+  const launch=async()=>{
+    setRunning(true);setResult(null);
+    try{const r=await api("/auto-send",{method:"POST"});setResult(r);loadStats();}
+    catch(e){setResult({error:e.message});}
+    setRunning(false);
+  };
+
+  const saveTpl=async()=>{
+    await api("/settings",{method:"POST",body:JSON.stringify({
+      tpl_email1_sujet:tpl.email1Sujet,tpl_email1_corps:tpl.email1Corps,
+      tpl_email2_sujet:tpl.email2Sujet,tpl_email2_corps:tpl.email2Corps,
+      tpl_email3_sujet:tpl.email3Sujet,tpl_email3_corps:tpl.email3Corps})});
+  };
+
+  const applyTpl=async()=>{
+    setApplying(true);setApplyResult(null);
+    try{await saveTpl();const r=await api("/bulk-generate-emails",{method:"POST",body:JSON.stringify(tpl)});
+      setApplyResult(r);loadStats();}
+    catch(e){setApplyResult({error:e.message});}
+    setApplying(false);
+  };
+
+  if(loading)return h("div",{className:"text-center py-20 text-gray-400"},"Chargement...");
+  if(!stats)return h("div",{className:"text-center py-20 text-red-400"},"Erreur de chargement");
+
+  const pct=stats.dailyLimit>0?Math.round(stats.sentToday/stats.dailyLimit*100):0;
+  const totalReady=stats.readyEmail1+stats.readyEmail2+stats.readyEmail3;
+
+  return h("div",{className:"max-w-4xl mx-auto fade space-y-6"},
+    // Header
+    h("div",{className:"flex items-center justify-between"},
+      h("h2",{className:"text-xl font-bold text-gray-900"},"Campagne"),
+      h("button",{onClick:launch,disabled:running||totalReady===0,
+        className:"px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl text-sm font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-40 transition-all shadow-lg "+(running?"animate-pulse":"")},
+        running?"Envoi en cours...":"Lancer la campagne ("+totalReady+" emails)")),
+
+    // KPI cards
+    h("div",{className:"grid grid-cols-2 md:grid-cols-4 gap-4"},
+      h("div",{className:"bg-white rounded-xl border p-4"},
+        h("div",{className:"text-xs text-gray-500 mb-1"},"Envois aujourd'hui"),
+        h("div",{className:"text-2xl font-bold"},stats.sentToday,h("span",{className:"text-sm text-gray-400 font-normal"}," / "+stats.dailyLimit)),
+        h("div",{className:"w-full bg-gray-100 rounded-full h-2 mt-2"},
+          h("div",{className:"h-2 rounded-full transition-all "+(pct>=90?"bg-red-500":pct>=60?"bg-yellow-500":"bg-green-500"),style:{width:Math.min(100,pct)+"%"}}))),
+      h("div",{className:"bg-blue-50 rounded-xl border border-blue-100 p-4"},
+        h("div",{className:"text-xs text-blue-600 mb-1"},"Email 1 a envoyer"),
+        h("div",{className:"text-2xl font-bold text-blue-700"},stats.readyEmail1)),
+      h("div",{className:"bg-purple-50 rounded-xl border border-purple-100 p-4"},
+        h("div",{className:"text-xs text-purple-600 mb-1"},"Email 2 (relance)"),
+        h("div",{className:"text-2xl font-bold text-purple-700"},stats.readyEmail2)),
+      h("div",{className:"bg-indigo-50 rounded-xl border border-indigo-100 p-4"},
+        h("div",{className:"text-xs text-indigo-600 mb-1"},"Email 3 (dernier)"),
+        h("div",{className:"text-2xl font-bold text-indigo-700"},stats.readyEmail3))),
+
+    // Sequence progress
+    h("div",{className:"bg-white rounded-xl border p-6"},
+      h("h3",{className:"font-semibold text-gray-800 mb-4"},"Progression de la sequence"),
+      h("div",{className:"flex items-center gap-2"},
+        [{label:"Pas contacte",count:stats.atStage0,color:"#3B82F6"},
+         {label:"Email 1 envoye",count:stats.atStage1,color:"#8B5CF6"},
+         {label:"Email 2 envoye",count:stats.atStage2,color:"#6366F1"},
+         {label:"Email 3 envoye",count:stats.atStage3,color:"#059669"}].map((s,i)=>{
+          const total=stats.atStage0+stats.atStage1+stats.atStage2+stats.atStage3;
+          const w=total>0?Math.max(5,s.count/total*100):25;
+          return h("div",{key:i,className:"text-center",style:{flex:w}},
+            h("div",{className:"h-8 rounded-lg flex items-center justify-center text-white text-xs font-bold",style:{backgroundColor:s.color}},s.count),
+            h("div",{className:"text-xs text-gray-500 mt-1"},s.label));
+        }))),
+
+    // Last run
+    stats.lastRun?h("div",{className:"bg-white rounded-xl border p-4"},
+      h("div",{className:"flex items-center justify-between"},
+        h("span",{className:"text-sm text-gray-500"},"Dernier lancement: "+new Date(stats.lastRun.startedAt).toLocaleString("fr-FR")),
+        h("div",{className:"flex items-center gap-3 text-sm"},
+          h("span",{className:"text-green-600 font-medium"},stats.lastRun.emailsSent+" envoyes"),
+          stats.lastRun.emailsFailed>0?h("span",{className:"text-red-500"},stats.lastRun.emailsFailed+" echecs"):null,
+          stats.lastRun.repliesDetected>0?h("span",{className:"text-yellow-600"},stats.lastRun.repliesDetected+" reponses"):null))):null,
+
+    // Results from current run
+    result?h("div",{className:"rounded-xl border p-6 "+(result.error?"bg-red-50 border-red-200":"bg-green-50 border-green-200")},
+      result.error?h("div",{className:"text-red-700 font-medium"},result.error):
+      h("div",null,
+        h("div",{className:"text-green-800 font-semibold text-lg mb-2"},"Campagne terminee"),
+        h("div",{className:"grid grid-cols-3 gap-4 text-sm"},
+          h("div",null,h("span",{className:"text-green-700 font-bold text-xl"},result.sent),h("span",{className:"text-green-600"}," envoyes")),
+          h("div",null,h("span",{className:"text-red-600 font-bold text-xl"},result.failed),h("span",{className:"text-red-500"}," echecs")),
+          h("div",null,h("span",{className:"text-yellow-600 font-bold text-xl"},result.bounced||0),h("span",{className:"text-yellow-500"}," bounces"))),
+        result.inbox?h("div",{className:"mt-3 pt-3 border-t border-green-200 text-sm text-green-700"},
+          "Inbox: "+result.inbox.replies+" reponses, "+result.inbox.stops+" STOP, "+result.inbox.bounces+" bounces"):null)):null,
+
+    // Templates
+    h("div",{className:"bg-white rounded-xl border p-6"},
+      h("div",{className:"flex items-center justify-between mb-4"},
+        h("h3",{className:"font-semibold text-gray-800"},"Templates d'emails"),
+        h("div",{className:"text-xs text-gray-400 bg-gray-50 px-3 py-1.5 rounded-lg"},"Variables: {nom} {ville} {type} {region} {site}")),
+      [["Email 1 — Premier contact","email1Sujet","email1Corps"],
+       ["Email 2 — Relance","email2Sujet","email2Corps"],
+       ["Email 3 — Dernier message","email3Sujet","email3Corps"]].map(([title,sk,bk])=>
+        h("div",{key:sk,className:"mb-6 p-4 bg-gray-50 rounded-lg"},
+          h("div",{className:"text-sm font-medium text-gray-700 mb-2"},title),
+          h("input",{value:tpl[sk],onChange:e=>setTpl({...tpl,[sk]:e.target.value}),placeholder:"Objet...",
+            className:"w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-blue-200"}),
+          h("textarea",{value:tpl[bk],onChange:e=>setTpl({...tpl,[bk]:e.target.value}),placeholder:"Corps du message...",rows:4,
+            className:"w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-200 resize-none"}))),
+      h("div",{className:"flex items-center gap-3"},
+        h("button",{onClick:saveTpl,className:"px-5 py-2.5 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700"},"Sauvegarder les templates"),
+        h("button",{onClick:applyTpl,disabled:applying||!tpl.email1Sujet,
+          className:"px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40"},
+          applying?"Application...":"Appliquer aux prospects sans template"),
+        applyResult?h("span",{className:"text-sm "+(applyResult.error?"text-red-500":"text-green-600")},
+          applyResult.error||applyResult.updated+" prospects mis a jour"):null))
+  );
+}
+
+// --- Settings ----------------------------------------------------------------
 function SettingsView(){
   const[s,setS]=useState({});
   const[loading,setLoading]=useState(true);
@@ -360,12 +493,18 @@ function SettingsView(){
           h(Field,{label:"Port IMAP",k:"imap_port"}),
           h(Field,{label:"Utilisateur IMAP",k:"imap_user"}),
           h(Field,{label:"Mot de passe IMAP",k:"imap_pass",type:"password"}))),
+      h("div",null,
+        h("h3",{className:"font-semibold text-gray-800 mb-3"},"Campagne"),
+        h("div",{className:"grid grid-cols-3 gap-4"},
+          h(Field,{label:"Limite journaliere",k:"daily_limit"}),
+          h(Field,{label:"Delai Email 2 (jours)",k:"delay_email2"}),
+          h(Field,{label:"Delai Email 3 (jours)",k:"delay_email3"}))),
       h("div",{className:"flex items-center gap-3"},
-        h("button",{onClick:save,className:"px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"},saved?"✅ Sauvegardé":"Sauvegarder"),
+        h("button",{onClick:save,className:"px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"},saved?"Sauvegarde":"Sauvegarder"),
         h("button",{onClick:checkInbox,disabled:checking,className:"px-4 py-2.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50"},
-          checking?"Vérification...":"📥 Vérifier la boîte mail"),
+          checking?"Verification...":"Verifier la boite mail"),
         inboxResult?h("span",{className:"text-sm "+(inboxResult.error?"text-red-500":"text-green-600")},
-          inboxResult.error||(""+inboxResult.replies+" réponses, "+inboxResult.stops+" STOP")):null))
+          inboxResult.error||(""+inboxResult.replies+" reponses, "+inboxResult.stops+" STOP")):null))
   );
 }
 
@@ -377,7 +516,7 @@ function App(){
 
   if(!auth)return h(Login,{onLogin:t=>{setToken(t);setAuth(true);}});
 
-  const navs=[["dashboard","📊","Dashboard"],["table","👥","Prospects"],["settings","⚙️","Paramètres"]];
+  const navs=[["dashboard","📊","Dashboard"],["table","👥","Prospects"],["campaign","🚀","Campagne"],["settings","⚙️","Paramètres"]];
 
   return h("div",{className:"min-h-screen bg-gray-50"},
     h("header",{className:"bg-white border-b border-gray-200 sticky top-0 z-40"},
@@ -393,6 +532,7 @@ function App(){
       view==="dashboard"?h(Dashboard):null,
       view==="table"?h(ProspectTable,{onSelect:p=>{setSelectedId(p.id);setView("detail");}}):null,
       view==="detail"&&selectedId?h(ProspectDetail,{prospectId:selectedId,onBack:()=>{setView("table");setSelectedId(null);}}):null,
+      view==="campaign"?h(CampaignView):null,
       view==="settings"?h(SettingsView):null)
   );
 }
