@@ -9,16 +9,25 @@ import imaplib
 import email as emaillib
 import ssl
 import re
+import secrets
 from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from functools import wraps
 
+import hmac
+import hashlib
+import base64
 from flask import Flask, request, jsonify, send_from_directory, abort
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from models import db, Prospect, EmailLog, Setting
 
 # ─── App Config ───────────────────────────────────────────────────────────────
+JWT_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", "24"))
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "https://crmjalunia.onrender.com").split(",")
+
 def create_app():
     app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -30,10 +39,12 @@ def create_app():
 
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "jalunia-crm-secret-change-me")
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 
     db.init_app(app)
-    CORS(app)
+
+    # CORS: restrict to allowed origins only
+    CORS(app, origins=ALLOWED_ORIGINS)
 
     with app.app_context():
         db.create_all()
@@ -42,26 +53,66 @@ def create_app():
 
 app = create_app()
 
-# ─── Simple Auth ──────────────────────────────────────────────────────────────
+# Rate limiter: prevent brute force attacks
+limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
+
+# ─── Auth (JWT) ───────────────────────────────────────────────────────────────
 CRM_PASSWORD = os.environ.get("CRM_PASSWORD", "jalunia2026")
+
+def _b64url_encode(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+def _b64url_decode(s):
+    s += "=" * (4 - len(s) % 4)
+    return base64.urlsafe_b64decode(s)
+
+def _create_token():
+    """Create a signed token (HMAC-SHA256) with expiration."""
+    header = _b64url_encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    payload = _b64url_encode(json.dumps({
+        "sub": "crm_user",
+        "iat": int(datetime.now(timezone.utc).timestamp()),
+        "exp": int((datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRATION_HOURS)).timestamp()),
+    }).encode())
+    sig_input = f"{header}.{payload}".encode()
+    signature = _b64url_encode(hmac.new(app.config["SECRET_KEY"].encode(), sig_input, hashlib.sha256).digest())
+    return f"{header}.{payload}.{signature}"
+
+def _verify_token(token):
+    """Verify token signature and expiration."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return False
+        sig_input = f"{parts[0]}.{parts[1]}".encode()
+        expected_sig = _b64url_encode(hmac.new(app.config["SECRET_KEY"].encode(), sig_input, hashlib.sha256).digest())
+        if not hmac.compare_digest(parts[2], expected_sig):
+            return False
+        payload = json.loads(_b64url_decode(parts[1]))
+        if payload.get("exp", 0) < datetime.now(timezone.utc).timestamp():
+            return False
+        return True
+    except Exception:
+        return False
 
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth = request.headers.get("Authorization", "")
-        if auth != f"Bearer {CRM_PASSWORD}":
-            # Also check query param for simple access
-            if request.args.get("key") != CRM_PASSWORD:
-                return jsonify({"error": "Non autorisé"}), 401
+        token = auth.replace("Bearer ", "") if auth.startswith("Bearer ") else ""
+        if not token or not _verify_token(token):
+            return jsonify({"error": "Non autorisé"}), 401
         return f(*args, **kwargs)
     return decorated
 
 # ─── API: Auth ────────────────────────────────────────────────────────────────
 @app.route("/api/login", methods=["POST"])
+@limiter.limit("5 per minute")
 def login():
     data = request.get_json() or {}
     if data.get("password") == CRM_PASSWORD:
-        return jsonify({"token": CRM_PASSWORD, "ok": True})
+        token = _create_token()
+        return jsonify({"token": token, "ok": True})
     return jsonify({"error": "Mot de passe incorrect"}), 401
 
 # ─── API: Prospects ───────────────────────────────────────────────────────────
@@ -421,6 +472,16 @@ def import_prospects():
 
     db.session.commit()
     return jsonify({"ok": True, "imported": imported})
+
+# ─── Health Check ────────────────────────────────────────────────────────────
+@app.route("/health")
+def health():
+    """Health check endpoint for Render monitoring."""
+    try:
+        db.session.execute(db.text("SELECT 1"))
+        return jsonify({"status": "healthy", "database": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "unhealthy", "database": str(e)}), 503
 
 # ─── Serve Frontend ──────────────────────────────────────────────────────────
 @app.route("/")
