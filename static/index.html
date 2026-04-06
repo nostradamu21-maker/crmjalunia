@@ -37,10 +37,11 @@ const PIPELINE=["new","email_sent","replied","meeting","converted"];
 const statusOf=id=>STATUSES.find(s=>s.id===id)||STATUSES[0];
 
 // ─── API Helper ──────────────────────────────────────────────────────────────
-let TOKEN="";
+let TOKEN=localStorage.getItem("crm_token")||"";
+const setToken=(t)=>{TOKEN=t;if(t)localStorage.setItem("crm_token",t);else localStorage.removeItem("crm_token");};
 const api=async(path,opts={})=>{
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,...(opts.headers||{})}});
-  if(res.status===401){TOKEN="";throw new Error("Non autorisé");}
+  if(res.status===401){setToken("");throw new Error("Non autorisé");}
   const data=await res.json();
   if(!res.ok)throw new Error(data.error||"Erreur");
   return data;
@@ -55,7 +56,7 @@ function Login({onLogin}){
     e.preventDefault();setLoading(true);setErr("");
     try{const r=await fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:pw})});
       const d=await r.json();
-      if(d.ok){TOKEN=d.token;onLogin(d.token);}else setErr(d.error||"Erreur");
+      if(d.ok){setToken(d.token);onLogin(d.token);}else setErr(d.error||"Erreur");
     }catch(e){setErr("Connexion impossible");}
     setLoading(false);
   };
@@ -370,11 +371,11 @@ function SettingsView(){
 
 // ─── Main App ────────────────────────────────────────────────────────────────
 function App(){
-  const[auth,setAuth]=useState(false);
+  const[auth,setAuth]=useState(!!TOKEN);
   const[view,setView]=useState("dashboard");
   const[selectedId,setSelectedId]=useState(null);
 
-  if(!auth)return h(Login,{onLogin:t=>{TOKEN=t;setAuth(true);}});
+  if(!auth)return h(Login,{onLogin:t=>{setToken(t);setAuth(true);}});
 
   const navs=[["dashboard","📊","Dashboard"],["table","👥","Prospects"],["settings","⚙️","Paramètres"]];
 
@@ -387,7 +388,7 @@ function App(){
         h("nav",{className:"flex items-center gap-1 bg-gray-100 rounded-lg p-1"},
           navs.map(([id,ico,lbl])=>h("button",{key:id,onClick:()=>{setView(id);setSelectedId(null);},
             className:"flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all "+(view===id||(view==="detail"&&id==="table")?"bg-white text-blue-600 shadow-sm":"text-gray-500 hover:text-gray-700")},ico+" "+lbl))),
-        h("button",{onClick:()=>setAuth(false),className:"text-sm text-gray-400 hover:text-gray-600"},"Déconnexion"))),
+        h("button",{onClick:()=>{setToken("");setAuth(false);},className:"text-sm text-gray-400 hover:text-gray-600"},"Déconnexion"))),
     h("main",{className:"max-w-7xl mx-auto px-6 py-6"},
       view==="dashboard"?h(Dashboard):null,
       view==="table"?h(ProspectTable,{onSelect:p=>{setSelectedId(p.id);setView("detail");}}):null,
