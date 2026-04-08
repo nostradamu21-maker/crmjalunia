@@ -1,6 +1,5 @@
 """
-models.py — Database models for Jalunia CRM
-Uses SQLAlchemy with SQLite locally, PostgreSQL on Railway.
+models.py - Database models for Jalunia CRM
 """
 from datetime import datetime, timezone
 from flask_sqlalchemy import SQLAlchemy
@@ -13,7 +12,7 @@ class Prospect(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     nom = db.Column(db.String(200), nullable=False, index=True)
-    type = db.Column(db.String(80), default="hébergement")
+    type = db.Column(db.String(80), default="hebergement")
     ville = db.Column(db.String(100), index=True)
     region = db.Column(db.String(100))
     adresse = db.Column(db.String(300))
@@ -32,7 +31,12 @@ class Prospect(db.Model):
     notes = db.Column(db.Text, default="")
     bounce_count = db.Column(db.Integer, default=0)
 
-    # Pre-generated messages (from messages.py)
+    # Scoring & tracking
+    score = db.Column(db.Integer, default=0, index=True)
+    email_opened = db.Column(db.Boolean, default=False)
+    unsubscribe_token = db.Column(db.String(64), unique=True, index=True, nullable=True)
+
+    # Pre-generated messages
     email1_sujet = db.Column(db.String(300))
     email1_corps = db.Column(db.Text)
     email2_sujet = db.Column(db.String(300))
@@ -44,7 +48,7 @@ class Prospect(db.Model):
     linkedin_msg2 = db.Column(db.Text)
 
     # Track which emails have been sent
-    emails_sent = db.Column(db.Integer, default=0)  # 0, 1, 2, or 3
+    emails_sent = db.Column(db.Integer, default=0)
     last_email_date = db.Column(db.DateTime, nullable=True)
 
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
@@ -72,6 +76,8 @@ class Prospect(db.Model):
             "emailsSent": self.emails_sent or 0,
             "lastEmailDate": self.last_email_date.isoformat() if self.last_email_date else "",
             "bounceCount": self.bounce_count or 0,
+            "score": self.score or 0,
+            "emailOpened": self.email_opened or False,
             "email1Sujet": self.email1_sujet or "",
             "email1Corps": self.email1_corps or "",
             "email2Sujet": self.email2_sujet or "",
@@ -86,14 +92,19 @@ class EmailLog(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     prospect_id = db.Column(db.Integer, db.ForeignKey("prospects.id"), nullable=False, index=True)
-    email_num = db.Column(db.Integer)  # 1, 2, or 3
+    email_num = db.Column(db.Integer)
     subject = db.Column(db.String(300))
     body = db.Column(db.Text)
     sent_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    status = db.Column(db.String(20), default="sent")  # sent, bounced, replied
+    status = db.Column(db.String(20), default="sent")
     error_message = db.Column(db.Text, nullable=True)
     reply_body = db.Column(db.Text, nullable=True)
     reply_at = db.Column(db.DateTime, nullable=True)
+
+    # Open tracking
+    tracking_id = db.Column(db.String(64), unique=True, index=True, nullable=True)
+    opened_at = db.Column(db.DateTime, nullable=True)
+    open_count = db.Column(db.Integer, default=0)
 
     prospect = db.relationship("Prospect", backref=db.backref("email_logs", lazy="dynamic"))
 
@@ -108,6 +119,8 @@ class EmailLog(db.Model):
             "errorMessage": self.error_message or "",
             "replyBody": self.reply_body or "",
             "replyAt": self.reply_at.isoformat() if self.reply_at else "",
+            "openedAt": self.opened_at.isoformat() if self.opened_at else "",
+            "openCount": self.open_count or 0,
         }
 
 
@@ -122,8 +135,8 @@ class CampaignRun(db.Model):
     bounces_detected = db.Column(db.Integer, default=0)
     replies_detected = db.Column(db.Integer, default=0)
     stops_detected = db.Column(db.Integer, default=0)
-    status = db.Column(db.String(20), default="running")  # running, completed, error
-    details = db.Column(db.Text)  # JSON with per-email results
+    status = db.Column(db.String(20), default="running")
+    details = db.Column(db.Text)
 
     def to_dict(self):
         return {
