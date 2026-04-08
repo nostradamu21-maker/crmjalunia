@@ -76,6 +76,8 @@ class Prospect(db.Model):
             "emailsSent": self.emails_sent or 0,
             "lastEmailDate": self.last_email_date.isoformat() if self.last_email_date else "",
             "bounceCount": self.bounce_count or 0,
+            "score": self.score or 0,
+            "emailOpened": self.email_opened or False,
             "email1Sujet": self.email1_sujet or "",
             "email1Corps": self.email1_corps or "",
             "email2Sujet": self.email2_sujet or "",
@@ -94,7 +96,7 @@ class EmailLog(db.Model):
     subject = db.Column(db.String(300))
     body = db.Column(db.Text)
     sent_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    status = db.Column(db.String(20), default="sent")  # sent, bounced, replied
+    status = db.Column(db.String(20), default="sent")
     error_message = db.Column(db.Text, nullable=True)
     reply_body = db.Column(db.Text, nullable=True)
     reply_at = db.Column(db.DateTime, nullable=True)
@@ -135,34 +137,6 @@ class CampaignRun(db.Model):
     stops_detected = db.Column(db.Integer, default=0)
     status = db.Column(db.String(20), default="running")
     details = db.Column(db.Text)
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "startedAt": self.started_at.isoformat() if self.started_at else "",
-            "finishedAt": self.finished_at.isoformat() if self.finished_at else "",
-            "emailsSent": self.emails_sent,
-            "emailsFailed": self.emails_failed,
-            "bouncesDetected": self.bounces_detected,
-            "repliesDetected": self.replies_detected,
-            "stopsDetected": self.stops_detected,
-            "status": self.status,
-        }
-
-
-class CampaignRun(db.Model):
-    __tablename__ = "campaign_runs"
-
-    id = db.Column(db.Integer, primary_key=True)
-    started_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
-    finished_at = db.Column(db.DateTime, nullable=True)
-    emails_sent = db.Column(db.Integer, default=0)
-    emails_failed = db.Column(db.Integer, default=0)
-    bounces_detected = db.Column(db.Integer, default=0)
-    replies_detected = db.Column(db.Integer, default=0)
-    stops_detected = db.Column(db.Integer, default=0)
-    status = db.Column(db.String(20), default="running")  # running, completed, error
-    details = db.Column(db.Text)  # JSON with per-email results
 
     def to_dict(self):
         return {
