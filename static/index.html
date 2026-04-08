@@ -372,7 +372,6 @@ function CampaignView(){
   const[tpl,setTpl]=useState({email1Sujet:"",email1Corps:"",email2Sujet:"",email2Corps:"",email3Sujet:"",email3Corps:""});
   const[applying,setApplying]=useState(false);
   const[applyResult,setApplyResult]=useState(null);
-  const[preview,setPreview]=useState(null);
 
   const loadStats=()=>{api("/campaign/stats").then(setStats).catch(()=>{}).finally(()=>setLoading(false));};
   useEffect(()=>{loadStats();
@@ -491,18 +490,8 @@ function CampaignView(){
         h("button",{onClick:applyTpl,disabled:applying||!tpl.email1Sujet,
           className:"px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40"},
           applying?"Application...":"Appliquer aux prospects sans template"),
-        h("button",{onClick:async()=>{
-          try{const r=await api("/preview-email",{method:"POST",body:JSON.stringify({subject:tpl.email1Sujet,body:tpl.email1Corps})});setPreview(r);}
-          catch(e){setPreview({error:e.message});}
-        },disabled:!tpl.email1Sujet,className:"px-5 py-2.5 border border-gray-200 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-40"},"👁 Preview"),
         applyResult?h("span",{className:"text-sm "+(applyResult.error?"text-red-500":"text-green-600")},
-          applyResult.error||applyResult.updated+" prospects mis a jour"):null),
-      preview&&!preview.error?h("div",{className:"mt-4 p-4 bg-gray-50 rounded-lg border"},
-        h("div",{className:"flex items-center justify-between mb-2"},
-          h("span",{className:"text-xs text-gray-500"},"Preview avec: "+preview.prospect.nom+" ("+preview.prospect.email+")"),
-          h("button",{onClick:()=>setPreview(null),className:"text-gray-400 hover:text-gray-600"},"x")),
-        h("div",{className:"text-sm font-medium text-gray-800 mb-2"},"Objet: "+preview.subject),
-        h("div",{className:"bg-white p-4 rounded border text-sm",dangerouslySetInnerHTML:{__html:preview.bodyHtml}})):null)
+          applyResult.error||applyResult.updated+" prospects mis a jour"):null))
   );
 }
 
@@ -549,10 +538,7 @@ function SettingsView(){
         h("div",{className:"grid grid-cols-3 gap-4"},
           h(Field,{label:"Limite journaliere",k:"daily_limit"}),
           h(Field,{label:"Delai Email 2 (jours)",k:"delay_email2"}),
-          h(Field,{label:"Delai Email 3 (jours)",k:"delay_email3"}),
-          h(Field,{label:"Heure debut (France)",k:"send_hour_start"}),
-          h(Field,{label:"Heure fin (France)",k:"send_hour_end"}),
-          h(Field,{label:"URL du CRM (pour tracking)",k:"base_url"}))),
+          h(Field,{label:"Delai Email 3 (jours)",k:"delay_email3"}))),
       h("div",{className:"flex items-center gap-3"},
         h("button",{onClick:save,className:"px-6 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"},saved?"Sauvegarde":"Sauvegarder"),
         h("button",{onClick:checkInbox,disabled:checking,className:"px-4 py-2.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50"},

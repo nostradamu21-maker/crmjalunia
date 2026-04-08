@@ -55,13 +55,7 @@ def _auto_migrate(app):
     """Add missing columns to existing tables (safe to run multiple times)."""
     migrations = [
         ("prospects", "bounce_count", "INTEGER DEFAULT 0"),
-        ("prospects", "score", "INTEGER DEFAULT 0"),
-        ("prospects", "email_opened", "BOOLEAN DEFAULT FALSE"),
-        ("prospects", "unsubscribe_token", "VARCHAR(64)"),
         ("email_logs", "error_message", "TEXT"),
-        ("email_logs", "tracking_id", "VARCHAR(64)"),
-        ("email_logs", "opened_at", "TIMESTAMP"),
-        ("email_logs", "open_count", "INTEGER DEFAULT 0"),
     ]
     with db.engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -73,19 +67,6 @@ def _auto_migrate(app):
 
 app = create_app()
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
-
-# Backfill unsubscribe tokens for existing prospects
-with app.app_context():
-    try:
-        for p in Prospect.query.filter(Prospect.unsubscribe_token.is_(None)).all():
-            p.unsubscribe_token = secrets.token_urlsafe(32)
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-
-# 1x1 transparent GIF for tracking pixel
-TRACKING_GIF = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-BASE_URL = os.environ.get("BASE_URL", "https://crmjalunia.onrender.com")
 
 # --- Auth (JWT) ---------------------------------------------------------------
 CRM_PASSWORD = os.environ.get("CRM_PASSWORD", "jalunia2026")
@@ -172,45 +153,6 @@ def _render_template(text, prospect):
 def _is_valid_email(email):
     return bool(email and re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email.strip()))
 
-def _calculate_score(prospect):
-    """Auto-score a prospect based on engagement signals."""
-    s = 0
-    if prospect.email and _is_valid_email(prospect.email):
-        s += 10
-    if prospect.site_web:
-        s += 5
-    if prospect.telephone:
-        s += 5
-    if prospect.note_google and prospect.note_google >= 4.0:
-        s += 10
-    if prospect.note_google and prospect.note_google >= 4.5:
-        s += 5
-    if prospect.email_opened:
-        s += 20
-    if prospect.status == "replied":
-        s += 50
-    if prospect.status == "meeting":
-        s += 70
-    if prospect.status == "converted":
-        s += 100
-    if prospect.status in ("bounced", "unsubscribed", "not_interested"):
-        s = max(s - 50, 0)
-    prospect.score = s
-    return s
-
-def _get_france_hour():
-    """Get current hour in France (CET/CEST)."""
-    now = datetime.now(timezone.utc)
-    month = now.month
-    # CEST: last Sunday of March to last Sunday of October = UTC+2
-    # CET: rest of year = UTC+1
-    offset = 2 if 4 <= month <= 9 else 1
-    if month == 3 and now.day >= 25:
-        offset = 2
-    if month == 10 and now.day < 25:
-        offset = 2
-    return (now + timedelta(hours=offset)).hour
-
 # --- SMTP Helpers -------------------------------------------------------------
 def _get_smtp_config():
     return {
@@ -233,25 +175,11 @@ def _open_smtp_connection():
     server.login(cfg["user"], cfg["password"])
     return server
 
-def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_emails=None):
-    """Send one email with tracking pixel + unsubscribe link. Returns (success, error_message)."""
-    # Duplicate detection
-    if seen_emails is not None:
-        email_lower = prospect.email.strip().lower()
-        if email_lower in seen_emails:
-            return False, "duplicate"
-        seen_emails.add(email_lower)
-
+def _send_one_email(prospect, subject, body, email_num, smtp_server=None):
+    """Send one email. Returns (success, error_message). Does NOT commit."""
     subject = _render_template(subject, prospect)
     body = _render_template(body, prospect)
     cfg = _get_smtp_config()
-
-    # Generate tracking ID
-    tracking_id = secrets.token_urlsafe(32)
-
-    # Ensure prospect has unsubscribe token
-    if not prospect.unsubscribe_token:
-        prospect.unsubscribe_token = secrets.token_urlsafe(32)
 
     try:
         msg = MIMEMultipart("alternative")
@@ -259,26 +187,13 @@ def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_e
         msg["From"] = f"{cfg['sender_name']} <{cfg['sender_email']}>"
         msg["To"] = prospect.email
         msg["Reply-To"] = cfg["sender_email"]
-        # List-Unsubscribe header for Gmail/Outlook one-click unsubscribe
-        msg["List-Unsubscribe"] = f"<{BASE_URL}/api/unsubscribe/{prospect.unsubscribe_token}>"
-        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
         msg.attach(MIMEText(body, "plain", "utf-8"))
-
         html_body = body.replace("\n", "<br>")
-        # Add tracking pixel + unsubscribe footer
-        unsub_link = f"{BASE_URL}/api/unsubscribe/{prospect.unsubscribe_token}"
-        pixel_url = f"{BASE_URL}/api/track/{tracking_id}"
-        html_full = (
-            f"<html><body style='font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.6'>"
-            f"{html_body}"
-            f"<p style='margin-top:30px;padding-top:10px;border-top:1px solid #eee;font-size:11px;color:#999;'>"
-            f"Si vous ne souhaitez plus recevoir nos emails, "
-            f"<a href='{unsub_link}' style='color:#999;'>cliquez ici</a>.</p>"
-            f"<img src='{pixel_url}' width='1' height='1' style='display:none' />"
-            f"</body></html>"
-        )
-        msg.attach(MIMEText(html_full, "html", "utf-8"))
+        msg.attach(MIMEText(
+            f"<html><body style='font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.6'>{html_body}</body></html>",
+            "html", "utf-8"
+        ))
 
         if smtp_server:
             smtp_server.send_message(msg)
@@ -290,24 +205,21 @@ def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_e
                 server.send_message(msg)
 
         log = EmailLog(prospect_id=prospect.id, email_num=email_num,
-                       subject=subject, body=body, status="sent",
-                       tracking_id=tracking_id)
+                       subject=subject, body=body, status="sent")
         db.session.add(log)
         prospect.emails_sent = max(prospect.emails_sent or 0, email_num)
         prospect.last_email_date = datetime.now(timezone.utc)
         prospect.date_contact_email = prospect.date_contact_email or datetime.now(timezone.utc)
         if prospect.status == "new":
             prospect.status = "email_sent"
-        _calculate_score(prospect)
         return True, None
 
     except smtplib.SMTPRecipientsRefused:
         prospect.bounce_count = (prospect.bounce_count or 0) + 1
         prospect.status = "bounced"
-        _calculate_score(prospect)
         log = EmailLog(prospect_id=prospect.id, email_num=email_num,
                        subject=subject, body=body, status="bounced",
-                       error_message="Adresse email refusee", tracking_id=tracking_id)
+                       error_message="Adresse email refusee")
         db.session.add(log)
         return False, "bounce"
 
@@ -317,7 +229,7 @@ def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_e
     except Exception as e:
         log = EmailLog(prospect_id=prospect.id, email_num=email_num,
                        subject=subject, body=body, status="error",
-                       error_message=str(e)[:500], tracking_id=tracking_id)
+                       error_message=str(e)[:500])
         db.session.add(log)
         return False, str(e)[:200]
 
@@ -401,7 +313,6 @@ def _check_inbox_internal():
                     log.reply_body = body_text[:2000]
                     log.reply_at = datetime.now(timezone.utc)
 
-                _calculate_score(prospect)
                 db.session.commit()
             except Exception:
                 results["errors"] += 1
@@ -537,7 +448,6 @@ def create_prospect():
         ville=data.get("ville", ""), region=data.get("region", data.get("ville", "")),
         email=data.get("email", ""), telephone=data.get("telephone", ""),
         site_web=data.get("site", ""), notes=data.get("notes", ""), status="new",
-        unsubscribe_token=secrets.token_urlsafe(32),
     )
     _calculate_score(p)
     db.session.add(p)
@@ -606,14 +516,6 @@ def auto_send():
     cfg = _get_smtp_config()
     if not cfg["host"] or not cfg["user"]:
         return jsonify({"error": "SMTP non configure"}), 400
-
-    # Smart send hours check
-    send_start = int(Setting.get("send_hour_start", "9"))
-    send_end = int(Setting.get("send_hour_end", "18"))
-    france_hour = _get_france_hour()
-    if not (send_start <= france_hour < send_end):
-        return jsonify({"ok": True, "sent": 0, "failed": 0, "outsideHours": True,
-                        "message": f"Hors heures d'envoi ({send_start}h-{send_end}h France). Il est {france_hour}h."})
 
     daily_limit = int(Setting.get("daily_limit", "30"))
     delay_email2 = int(Setting.get("delay_email2", "3"))
@@ -694,9 +596,8 @@ def auto_send():
     db.session.add(run)
     db.session.commit()
 
-    # Open SMTP connection once, deduplicate emails
-    results = {"sent": 0, "failed": 0, "bounced": 0, "duplicates": 0, "details": []}
-    seen_emails = set()
+    # Open SMTP connection once
+    results = {"sent": 0, "failed": 0, "bounced": 0, "details": []}
     smtp_server = None
     try:
         smtp_server = _open_smtp_connection()
@@ -708,7 +609,7 @@ def auto_send():
         return jsonify({"error": f"Connexion SMTP impossible: {str(e)}"}), 500
 
     for i, (prospect, email_num, subject, body) in enumerate(queue):
-        success, error = _send_one_email(prospect, subject, body, email_num, smtp_server, seen_emails)
+        success, error = _send_one_email(prospect, subject, body, email_num, smtp_server)
         db.session.commit()
 
         detail = {"prospectId": prospect.id, "nom": prospect.nom,
@@ -724,8 +625,6 @@ def auto_send():
             results["failed"] += 1
             if error == "bounce":
                 results["bounced"] += 1
-            elif error == "duplicate":
-                results["duplicates"] += 1
             elif error and error.startswith("smtp_auth"):
                 # Auth failure = stop campaign
                 break
@@ -854,7 +753,6 @@ def get_settings():
     keys = ["smtp_host", "smtp_port", "smtp_user", "smtp_pass", "sender_email",
             "sender_name", "imap_host", "imap_port", "imap_user", "imap_pass",
             "daily_limit", "delay_email2", "delay_email3",
-            "send_hour_start", "send_hour_end", "base_url",
             "tpl_email1_sujet", "tpl_email1_corps",
             "tpl_email2_sujet", "tpl_email2_corps",
             "tpl_email3_sujet", "tpl_email3_corps"]
@@ -934,157 +832,6 @@ def import_prospects():
 
     db.session.commit()
     return jsonify({"ok": True, **stats})
-
-# --- API: Open Tracking (pixel) -----------------------------------------------
-@app.route("/api/track/<tracking_id>")
-def track_open(tracking_id):
-    """Track email open via 1x1 pixel. No auth required."""
-    from flask import Response
-    log = EmailLog.query.filter_by(tracking_id=tracking_id).first()
-    if log:
-        log.open_count = (log.open_count or 0) + 1
-        if not log.opened_at:
-            log.opened_at = datetime.now(timezone.utc)
-        prospect = Prospect.query.get(log.prospect_id)
-        if prospect:
-            prospect.email_opened = True
-            _calculate_score(prospect)
-        db.session.commit()
-    return Response(TRACKING_GIF, mimetype="image/gif",
-                    headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
-
-# --- API: Unsubscribe ---------------------------------------------------------
-@app.route("/api/unsubscribe/<token>")
-def unsubscribe(token):
-    """Public unsubscribe link. No auth required."""
-    prospect = Prospect.query.filter_by(unsubscribe_token=token).first()
-    if prospect:
-        prospect.status = "unsubscribed"
-        _calculate_score(prospect)
-        db.session.commit()
-    html = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Desinscription</title>
-    <style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;
-    min-height:100vh;background:#f9fafb;margin:0;}
-    .card{background:white;border-radius:16px;padding:40px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.1);max-width:400px;}
-    </style></head><body><div class="card">
-    <h2 style="color:#059669;">Desinscription confirmee</h2>
-    <p style="color:#6B7280;">Vous ne recevrez plus d'emails de notre part.</p>
-    </div></body></html>"""
-    return html, 200
-
-# --- API: Recalculate Scores --------------------------------------------------
-@app.route("/api/recalculate-scores", methods=["POST"])
-@require_auth
-def recalculate_scores():
-    """Recalculate all prospect scores."""
-    count = 0
-    for p in Prospect.query.all():
-        _calculate_score(p)
-        count += 1
-    db.session.commit()
-    return jsonify({"ok": True, "updated": count})
-
-# --- API: Email Analytics -----------------------------------------------------
-@app.route("/api/analytics/emails")
-@require_auth
-def email_analytics():
-    """Per-template analytics: open rate, reply rate, bounce rate."""
-    analytics = {}
-    for num in [1, 2, 3]:
-        logs = EmailLog.query.filter_by(email_num=num)
-        total = logs.count()
-        if total == 0:
-            analytics[f"email{num}"] = {"total": 0, "opened": 0, "replied": 0, "bounced": 0,
-                                         "openRate": 0, "replyRate": 0, "bounceRate": 0}
-            continue
-        opened = logs.filter(EmailLog.opened_at.isnot(None)).count()
-        replied = logs.filter(EmailLog.status == "replied").count()
-        bounced = logs.filter(EmailLog.status == "bounced").count()
-        analytics[f"email{num}"] = {
-            "total": total, "opened": opened, "replied": replied, "bounced": bounced,
-            "openRate": round(opened / total * 100, 1) if total else 0,
-            "replyRate": round(replied / total * 100, 1) if total else 0,
-            "bounceRate": round(bounced / total * 100, 1) if total else 0,
-        }
-
-    # Global funnel from prospect statuses
-    funnel = {}
-    for s in ["new", "email_sent", "replied", "meeting", "converted"]:
-        funnel[s] = Prospect.query.filter_by(status=s).count()
-    analytics["funnel"] = funnel
-
-    # Hot leads
-    analytics["hotLeads"] = Prospect.query.filter(Prospect.score >= 30).count()
-
-    return jsonify(analytics)
-
-# --- API: Preview Email -------------------------------------------------------
-@app.route("/api/preview-email", methods=["POST"])
-@require_auth
-def preview_email():
-    """Preview a template rendered with a prospect's data."""
-    data = request.get_json() or {}
-    pid = data.get("prospectId")
-    subject = data.get("subject", "")
-    body = data.get("body", "")
-
-    if pid:
-        p = Prospect.query.get_or_404(pid)
-    else:
-        # Pick a random prospect for preview
-        p = Prospect.query.filter(Prospect.email != "", Prospect.email.isnot(None)).first()
-        if not p:
-            return jsonify({"error": "Aucun prospect avec email"}), 404
-
-    rendered_subject = _render_template(subject, p)
-    rendered_body = _render_template(body, p)
-    html_body = rendered_body.replace("\n", "<br>")
-    return jsonify({
-        "subject": rendered_subject,
-        "bodyText": rendered_body,
-        "bodyHtml": f"<div style='font-family:Arial;font-size:14px;color:#333;line-height:1.6'>{html_body}</div>",
-        "prospect": {"nom": p.nom, "email": p.email, "ville": p.ville},
-    })
-
-# --- API: Export CSV ----------------------------------------------------------
-@app.route("/api/export")
-@require_auth
-def export_prospects():
-    """Export filtered prospects to CSV."""
-    import csv
-    import io
-    from flask import Response
-
-    q = Prospect.query
-    status = request.args.get("status", "")
-    type_ = request.args.get("type", "")
-    search = request.args.get("search", "").strip()
-
-    if search:
-        like = f"%{search}%"
-        q = q.filter(db.or_(Prospect.nom.ilike(like), Prospect.ville.ilike(like),
-                             Prospect.email.ilike(like)))
-    if status:
-        q = q.filter_by(status=status)
-    if type_:
-        q = q.filter_by(type=type_)
-
-    prospects = q.order_by(Prospect.score.desc()).all()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["Nom", "Type", "Ville", "Region", "Email", "Telephone",
-                     "Site Web", "Note Google", "Avis", "Statut", "Score",
-                     "Emails Envoyes", "Email Ouvert", "Date Ajout"])
-    for p in prospects:
-        writer.writerow([p.nom, p.type, p.ville, p.region, p.email, p.telephone,
-                         p.site_web, p.note_google, p.nb_avis, p.status,
-                         p.score or 0, p.emails_sent or 0,
-                         "Oui" if p.email_opened else "Non",
-                         p.date_ajout.strftime("%Y-%m-%d") if p.date_ajout else ""])
-
-    return Response(output.getvalue(), mimetype="text/csv",
-                    headers={"Content-Disposition": "attachment; filename=prospects_jalunia.csv"})
 
 # --- Health Check -------------------------------------------------------------
 @app.route("/health")
