@@ -56,30 +56,32 @@ def _auto_migrate(app):
     migrations = [
         ("prospects", "bounce_count", "INTEGER DEFAULT 0"),
         ("prospects", "score", "INTEGER DEFAULT 0"),
-        ("prospects", "email_opened", "BOOLEAN DEFAULT FALSE"),
+        ("prospects", "email_opened", "BOOLEAN DEFAULT false"),
         ("prospects", "unsubscribe_token", "VARCHAR(64)"),
         ("email_logs", "error_message", "TEXT"),
         ("email_logs", "tracking_id", "VARCHAR(64)"),
         ("email_logs", "opened_at", "TIMESTAMP"),
         ("email_logs", "open_count", "INTEGER DEFAULT 0"),
     ]
-    with db.engine.connect() as conn:
-        for table, column, col_type in migrations:
-            try:
-                conn.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+    for table, column, col_type in migrations:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(db.text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type}"))
                 conn.commit()
-            except Exception:
-                conn.rollback()  # Column already exists, ignore
+        except Exception:
+            pass  # Column already exists or other non-critical error
 
 app = create_app()
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
 
-# Backfill unsubscribe tokens for existing prospects
+# Backfill unsubscribe tokens for existing prospects (batched)
 with app.app_context():
     try:
-        for p in Prospect.query.filter(Prospect.unsubscribe_token.is_(None)).all():
+        batch = Prospect.query.filter(Prospect.unsubscribe_token.is_(None)).limit(500).all()
+        for p in batch:
             p.unsubscribe_token = secrets.token_urlsafe(32)
-        db.session.commit()
+        if batch:
+            db.session.commit()
     except Exception:
         db.session.rollback()
 
