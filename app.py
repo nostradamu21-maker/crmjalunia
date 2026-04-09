@@ -1097,6 +1097,46 @@ def health():
     except Exception as e:
         return jsonify({"status": "unhealthy", "database": str(e)}), 503
 
+@app.route("/debug")
+def debug():
+    """Diagnostic endpoint - shows database state and any errors."""
+    info = {}
+    try:
+        info["db"] = "connected"
+        # Check if tables exist
+        result = db.session.execute(db.text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name='prospects' ORDER BY ordinal_position"
+        ))
+        info["prospect_columns"] = [r[0] for r in result]
+    except Exception as e:
+        info["db_error"] = str(e)
+        # Try SQLite fallback
+        try:
+            result = db.session.execute(db.text("PRAGMA table_info(prospects)"))
+            info["prospect_columns"] = [r[1] for r in result]
+        except Exception as e2:
+            info["db_error_sqlite"] = str(e2)
+    try:
+        count = Prospect.query.count()
+        info["prospect_count"] = count
+    except Exception as e:
+        info["prospect_query_error"] = str(e)
+    try:
+        p = Prospect.query.first()
+        if p:
+            info["first_prospect"] = p.nom
+            info["first_prospect_dict"] = p.to_dict()
+        else:
+            info["first_prospect"] = "NONE - table is empty"
+    except Exception as e:
+        info["to_dict_error"] = str(e)
+    try:
+        log_count = EmailLog.query.count()
+        info["email_log_count"] = log_count
+    except Exception as e:
+        info["email_log_error"] = str(e)
+    return jsonify(info)
+
 # --- Serve Frontend -----------------------------------------------------------
 @app.route("/")
 def index():
