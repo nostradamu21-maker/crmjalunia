@@ -1009,56 +1009,95 @@ def bulk_status():
     db.session.commit()
     return jsonify({"ok": True, "updated": len(ids)})
 
+def _extract_field(item, *keys):
+    """Try multiple key names, return first non-empty value."""
+    for k in keys:
+        v = item.get(k)
+        if v:
+            return str(v).strip() if isinstance(v, str) else v
+    return ""
+
+def _import_one_prospect(pd_item, stats):
+    """Import a single prospect from any JSON format. Mutates stats dict."""
+    nom = _extract_field(pd_item, "nom", "name", "Name", "Nom", "NOM", "etablissement", "Etablissement",
+                         "business_name", "title", "Title")
+    if not nom:
+        stats["errors"] += 1
+        return
+
+    email_addr = _extract_field(pd_item, "email", "Email", "EMAIL", "mail", "e-mail", "e_mail", "courriel").lower()
+    ville = _extract_field(pd_item, "ville", "Ville", "city", "City", "VILLE", "localite")
+    region = _extract_field(pd_item, "region", "Region", "REGION", "departement", "state", "province") or ville
+    type_ = _extract_field(pd_item, "type", "Type", "TYPE", "categorie", "category", "activite")
+    telephone = _extract_field(pd_item, "telephone", "Telephone", "phone", "Phone", "tel", "Tel", "TEL",
+                               "formatted_phone_number", "phone_number")
+    site = _extract_field(pd_item, "site", "site_web", "Site Web", "Site_web", "website", "Website",
+                          "url", "URL", "site_internet", "web")
+    adresse = _extract_field(pd_item, "adresse", "Adresse", "address", "Address", "formatted_address",
+                             "adresse_complete", "ADRESSE")
+    google_maps = _extract_field(pd_item, "googleMaps", "google_maps", "Google Maps", "maps_url", "url_maps",
+                                 "lien_google", "gmaps")
+    note = pd_item.get("note") or pd_item.get("note_google") or pd_item.get("Note Google") or pd_item.get("rating") or pd_item.get("Rating") or 0
+    avis = pd_item.get("avis") or pd_item.get("nb_avis") or pd_item.get("Avis") or pd_item.get("user_ratings_total") or pd_item.get("reviews") or 0
+    linkedin = _extract_field(pd_item, "linkedin", "LinkedIn", "linkedin_url", "linkedinUrl")
+
+    try:
+        note = float(note)
+    except (ValueError, TypeError):
+        note = 0
+    try:
+        avis = int(avis)
+    except (ValueError, TypeError):
+        avis = 0
+
+    # Deduplication: by email OR nom+ville
+    existing = None
+    if email_addr:
+        existing = Prospect.query.filter(db.func.lower(Prospect.email) == email_addr).first()
+    if not existing and nom and ville:
+        existing = Prospect.query.filter(
+            db.func.lower(Prospect.nom) == nom.lower(),
+            db.func.lower(Prospect.ville) == ville.lower()
+        ).first()
+
+    if existing:
+        updated = False
+        merges = [("email", email_addr), ("telephone", telephone), ("site_web", site),
+                  ("adresse", adresse), ("note_google", note), ("nb_avis", avis),
+                  ("google_maps", google_maps), ("linkedin_url", linkedin)]
+        for attr, val in merges:
+            if val and not getattr(existing, attr):
+                setattr(existing, attr, val)
+                updated = True
+        stats["updated" if updated else "skipped"] += 1
+        return
+
+    p = Prospect(
+        nom=nom, type=type_ or "autre", ville=ville, region=region,
+        email=email_addr, telephone=telephone, site_web=site,
+        note_google=note, nb_avis=avis, status="new",
+        adresse=adresse, google_maps=google_maps, linkedin_url=linkedin,
+        unsubscribe_token=secrets.token_urlsafe(32),
+    )
+    _calculate_score(p)
+    db.session.add(p)
+    stats["imported"] += 1
+
 # --- API: Import (smart dedup) ------------------------------------------------
 @app.route("/api/import", methods=["POST"])
 @require_auth
 def import_prospects():
     data = request.get_json() or {}
     prospects_data = data.get("prospects", [])
+    # Also accept root-level array
+    if not prospects_data and isinstance(data, list):
+        prospects_data = data
     stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
 
     for pd_item in prospects_data:
-        nom = (pd_item.get("nom") or "").strip()
-        if not nom:
-            stats["errors"] += 1
-            continue
-
-        email_addr = (pd_item.get("email") or "").strip().lower()
-        ville = (pd_item.get("ville") or "").strip()
-
-        # Deduplication: by email OR nom+ville
-        existing = None
-        if email_addr:
-            existing = Prospect.query.filter(db.func.lower(Prospect.email) == email_addr).first()
-        if not existing and nom and ville:
-            existing = Prospect.query.filter(
-                db.func.lower(Prospect.nom) == nom.lower(),
-                db.func.lower(Prospect.ville) == ville.lower()
-            ).first()
-
-        if existing:
-            updated = False
-            for field, attr in [("email", "email"), ("telephone", "telephone"),
-                                ("site", "site_web"), ("adresse", "adresse"),
-                                ("note", "note_google"), ("avis", "nb_avis"),
-                                ("googleMaps", "google_maps")]:
-                new_val = pd_item.get(field)
-                if new_val and not getattr(existing, attr):
-                    setattr(existing, attr, new_val)
-                    updated = True
-            stats["updated" if updated else "skipped"] += 1
-            continue
-
-        p = Prospect(
-            nom=nom, type=pd_item.get("type", ""), ville=ville,
-            region=pd_item.get("region", ville),
-            email=email_addr, telephone=pd_item.get("telephone", ""),
-            site_web=pd_item.get("site", ""), note_google=pd_item.get("note", 0),
-            nb_avis=pd_item.get("avis", 0), status="new",
-            adresse=pd_item.get("adresse", ""), google_maps=pd_item.get("googleMaps", ""),
-        )
-        db.session.add(p)
-        stats["imported"] += 1
+        _import_one_prospect(pd_item, stats)
+        if stats["imported"] % 500 == 0 and stats["imported"] > 0:
+            db.session.commit()
 
     db.session.commit()
     return jsonify({"ok": True, **stats})
@@ -1497,57 +1536,8 @@ def import_file():
     stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
 
     for pd_item in prospects_data:
-        nom = (pd_item.get("nom") or pd_item.get("name") or pd_item.get("Nom") or "").strip()
-        if not nom:
-            stats["errors"] += 1
-            continue
-
-        email_addr = (pd_item.get("email") or pd_item.get("Email") or "").strip().lower()
-        ville = (pd_item.get("ville") or pd_item.get("Ville") or pd_item.get("city") or "").strip()
-
-        existing = None
-        if email_addr:
-            existing = Prospect.query.filter(db.func.lower(Prospect.email) == email_addr).first()
-        if not existing and nom and ville:
-            existing = Prospect.query.filter(
-                db.func.lower(Prospect.nom) == nom.lower(),
-                db.func.lower(Prospect.ville) == ville.lower()
-            ).first()
-
-        if existing:
-            updated = False
-            for field, attr in [("email", "email"), ("telephone", "telephone"),
-                                ("site", "site_web"), ("adresse", "adresse"),
-                                ("note", "note_google"), ("avis", "nb_avis"),
-                                ("googleMaps", "google_maps"), ("site_web", "site_web"),
-                                ("telephone", "telephone")]:
-                new_val = pd_item.get(field)
-                if new_val and not getattr(existing, attr):
-                    setattr(existing, attr, new_val)
-                    updated = True
-            stats["updated" if updated else "skipped"] += 1
-            continue
-
-        p = Prospect(
-            nom=nom,
-            type=pd_item.get("type") or pd_item.get("Type") or "autre",
-            ville=ville,
-            region=pd_item.get("region") or pd_item.get("Region") or ville,
-            email=email_addr,
-            telephone=pd_item.get("telephone") or pd_item.get("Telephone") or "",
-            site_web=pd_item.get("site") or pd_item.get("site_web") or pd_item.get("Site Web") or "",
-            note_google=float(pd_item.get("note") or pd_item.get("note_google") or pd_item.get("Note Google") or 0),
-            nb_avis=int(pd_item.get("avis") or pd_item.get("nb_avis") or pd_item.get("Avis") or 0),
-            adresse=pd_item.get("adresse") or pd_item.get("Adresse") or "",
-            google_maps=pd_item.get("googleMaps") or pd_item.get("google_maps") or "",
-            status="new",
-            unsubscribe_token=secrets.token_urlsafe(32),
-        )
-        _calculate_score(p)
-        db.session.add(p)
-        stats["imported"] += 1
-
-        if stats["imported"] % 500 == 0:
+        _import_one_prospect(pd_item, stats)
+        if stats["imported"] % 500 == 0 and stats["imported"] > 0:
             db.session.commit()
 
     db.session.commit()

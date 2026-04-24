@@ -867,7 +867,8 @@ function ImportView(){
       h("button",{onClick:()=>setMode("file"),className:"px-4 py-2 rounded-lg text-sm font-bold "+(mode==="file"?"text-neon bg-gray-800 border border-neon/30":"text-gray-500 border border-gray-700")},"Uploader un fichier")),
 
     mode==="paste"?h("div",{className:"card-dark p-6"},
-      h("p",{className:"text-xs text-gray-500 mb-3"},"Format: [{\"nom\":\"Hotel X\",\"ville\":\"Paris\",\"email\":\"...\",\"type\":\"hotel\",\"telephone\":\"...\",\"site\":\"...\",\"note\":4.5,\"avis\":120}]"),
+      h("p",{className:"text-xs text-gray-500 mb-3 p-2 bg-gray-800/50 rounded-lg"},
+        "💡 Accepte tous les formats : nom/name/Name, ville/city, email/Email, telephone/phone, site/website, note/rating, avis/reviews, adresse/address, type/category... Le systeme detecte automatiquement les colonnes."),
       h("textarea",{value:jsonText,onChange:e=>setJsonText(e.target.value),rows:12,placeholder:"Collez votre JSON ici...",
         className:"w-full px-3 py-2 border border-gray-700 rounded-lg text-sm font-mono bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30 resize-none"}),
       h("button",{onClick:importJson,disabled:importing||!jsonText.trim(),
