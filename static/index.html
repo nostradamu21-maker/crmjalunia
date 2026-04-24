@@ -834,6 +834,7 @@ function ImportView(){
   const[jsonText,setJsonText]=useState("");
   const[importing,setImporting]=useState(false);
   const[result,setResult]=useState(null);
+  const[fast,setFast]=useState(true);
   const fileRef=useRef(null);
 
   const parseJson=txt=>{
@@ -858,7 +859,7 @@ function ImportView(){
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const sendChunk=(chunk)=>new Promise((resolve,reject)=>{
     const xhr=new XMLHttpRequest();
-    xhr.open("POST","/api/import");
+    xhr.open("POST","/api/import"+(fast?"?fast=1":""));
     xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
     xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
     xhr.onload=()=>{
@@ -921,9 +922,12 @@ function ImportView(){
   return h("div",{className:"max-w-3xl mx-auto fade space-y-6",style:{position:"relative",zIndex:1}},
     h("h2",{className:"text-xl font-bold text-white font-gaming tracking-wider"},"📥 IMPORT"),
 
-    h("div",{className:"flex gap-2 mb-4"},
+    h("div",{className:"flex gap-2 mb-4 flex-wrap items-center"},
       h("button",{onClick:()=>setMode("paste"),className:"px-4 py-2 rounded-lg text-sm font-bold "+(mode==="paste"?"text-neon bg-gray-800 border border-neon/30":"text-gray-500 border border-gray-700")},"Coller du JSON"),
-      h("button",{onClick:()=>setMode("file"),className:"px-4 py-2 rounded-lg text-sm font-bold "+(mode==="file"?"text-neon bg-gray-800 border border-neon/30":"text-gray-500 border border-gray-700")},"Uploader un fichier")),
+      h("button",{onClick:()=>setMode("file"),className:"px-4 py-2 rounded-lg text-sm font-bold "+(mode==="file"?"text-neon bg-gray-800 border border-neon/30":"text-gray-500 border border-gray-700")},"Uploader un fichier"),
+      h("label",{className:"flex items-center gap-2 ml-auto cursor-pointer"},
+        h("input",{type:"checkbox",checked:fast,onChange:e=>setFast(e.target.checked),className:"w-4 h-4 accent-cyan-400"}),
+        h("span",{className:"text-xs text-gray-400"},"Mode rapide (sans verification doublons)"))),
 
     mode==="paste"?h("div",{className:"card-dark p-6"},
       h("p",{className:"text-xs text-gray-500 mb-3 p-2 bg-gray-800/50 rounded-lg"},

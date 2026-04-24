@@ -1070,20 +1070,23 @@ def import_prospects():
         if not prospects_data:
             return jsonify({"error": "Aucun prospect"}), 400
 
+        skip_dedup = request.args.get("fast") == "1" or data.get("fast")
+
         stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0, "errorSamples": []}
 
-        # Lightweight dedup: just load emails and nom+ville pairs (not full objects)
         existing_emails = set()
-        for row in db.session.execute(db.text(
-                "SELECT lower(email) FROM prospects WHERE email IS NOT NULL AND email != ''")):
-            existing_emails.add(row[0])
-
         existing_names = set()
-        for row in db.session.execute(db.text(
-                "SELECT lower(nom), lower(ville) FROM prospects WHERE nom IS NOT NULL AND ville IS NOT NULL")):
-            existing_names.add((row[0], row[1]))
+        if not skip_dedup:
+            try:
+                for row in db.session.execute(db.text(
+                        "SELECT lower(email) FROM prospects WHERE email IS NOT NULL AND email != ''")):
+                    existing_emails.add(row[0])
+                for row in db.session.execute(db.text(
+                        "SELECT lower(nom), lower(ville) FROM prospects WHERE nom IS NOT NULL AND ville IS NOT NULL")):
+                    existing_names.add((row[0], row[1]))
+            except Exception:
+                skip_dedup = True
 
-        batch_emails = set()
         batch_names = set()
         batch = []
 
@@ -1103,15 +1106,13 @@ def import_prospects():
 
             nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
 
-            is_dup = False
-            if email_addr and (email_addr in existing_emails or email_addr in batch_emails):
-                is_dup = True
-            if not is_dup and nom and ville and ((nom.lower(), ville.lower()) in existing_names or (nom.lower(), ville.lower()) in batch_names):
-                is_dup = True
-
-            if is_dup:
-                stats["skipped"] += 1
-                continue
+            if not skip_dedup:
+                is_dup = (email_addr and email_addr in existing_emails) or \
+                         (nom and ville and (nom.lower(), ville.lower()) in existing_names) or \
+                         (nom and ville and (nom.lower(), ville.lower()) in batch_names)
+                if is_dup:
+                    stats["skipped"] += 1
+                    continue
 
             p = Prospect(
                 nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
@@ -1124,17 +1125,10 @@ def import_prospects():
             _calculate_score(p)
             batch.append(p)
 
-            if email_addr:
-                batch_emails.add(email_addr)
             if nom and ville:
                 batch_names.add((nom.lower(), ville.lower()))
 
             stats["imported"] += 1
-
-            if len(batch) >= 200:
-                db.session.add_all(batch)
-                db.session.commit()
-                batch = []
 
         if batch:
             db.session.add_all(batch)
@@ -1143,7 +1137,7 @@ def import_prospects():
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": f"Erreur serveur: {str(e)[:300]}", "imported": 0, "errors": 0}), 500
+        return jsonify({"error": f"Erreur: {str(e)[:300]}", "imported": 0, "errors": 0}), 500
 
 # --- API: Open Tracking (pixel) -----------------------------------------------
 @app.route("/api/track/<tracking_id>")
