@@ -149,7 +149,7 @@ let TOKEN=localStorage.getItem("crm_token")||"";
 const setToken=(t)=>{TOKEN=t;if(t)localStorage.setItem("crm_token",t);else localStorage.removeItem("crm_token");};
 const api=async(path,opts={})=>{
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,...(opts.headers||{})}});
-  if(res.status===401&&path!=="/refresh-token"){setToken("");location.reload();throw new Error("Session expiree — reconnexion");}
+  if(res.status===401&&path!=="/refresh-token"){setToken("");window._onAuthLost&&window._onAuthLost();throw new Error("Session expiree");}
   const data=await res.json();
   if(!res.ok)throw new Error(data.error||"Erreur");
   return data;
@@ -1088,6 +1088,8 @@ function App(){
   const[auth,setAuth]=useState(!!TOKEN);
   const[view,setView]=useState("dashboard");
   const[selectedId,setSelectedId]=useState(null);
+
+  useEffect(()=>{window._onAuthLost=()=>setAuth(false);return()=>{window._onAuthLost=null;};},[]);
 
   if(!auth)return h(Login,{onLogin:t=>{setToken(t);setAuth(true);}});
 

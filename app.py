@@ -39,7 +39,7 @@ def create_app():
 
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+    app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "jalunia-crm-secret-key-stable-2026")
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB max upload
 
     db.init_app(app)
