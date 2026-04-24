@@ -1064,92 +1064,86 @@ def _parse_prospect_fields(pd_item):
 @app.route("/api/import", methods=["POST"])
 @require_auth
 def import_prospects():
-    data = request.get_json(force=True, silent=True) or {}
-    prospects_data = data.get("prospects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
-    if not prospects_data:
-        return jsonify({"error": "Aucun prospect"}), 400
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+        prospects_data = data.get("prospects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+        if not prospects_data:
+            return jsonify({"error": "Aucun prospect"}), 400
 
-    stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0, "errorSamples": []}
+        stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0, "errorSamples": []}
 
-    # Preload existing emails + nom/ville into memory for fast dedup (1 query instead of 16000)
-    existing_emails = {}
-    for p in db.session.query(Prospect.id, Prospect.email).filter(
-            Prospect.email != "", Prospect.email.isnot(None)).all():
-        if p.email:
-            existing_emails[p.email.strip().lower()] = p.id
+        # Lightweight dedup: just load emails and nom+ville pairs (not full objects)
+        existing_emails = set()
+        for row in db.session.execute(db.text(
+                "SELECT lower(email) FROM prospects WHERE email IS NOT NULL AND email != ''")):
+            existing_emails.add(row[0])
 
-    existing_names = {}
-    for p in db.session.query(Prospect.id, Prospect.nom, Prospect.ville).all():
-        if p.nom and p.ville:
-            existing_names[(p.nom.strip().lower(), p.ville.strip().lower())] = p.id
+        existing_names = set()
+        for row in db.session.execute(db.text(
+                "SELECT lower(nom), lower(ville) FROM prospects WHERE nom IS NOT NULL AND ville IS NOT NULL")):
+            existing_names.add((row[0], row[1]))
 
-    # Also track what we add in this batch to avoid self-duplicates
-    batch_emails = set()
-    batch_names = set()
+        batch_emails = set()
+        batch_names = set()
+        batch = []
 
-    batch = []
-    for pd_item in prospects_data:
-        parsed = _parse_prospect_fields(pd_item)
-        if not parsed:
-            stats["errors"] += 1
-            if len(stats["errorSamples"]) < 5:
-                sample = {}
-                if isinstance(pd_item, dict):
-                    sample = {str(k): str(v)[:80] for k, v in list(pd_item.items())[:10]}
-                else:
-                    sample = {"raw": str(pd_item)[:200]}
-                stats["errorSamples"].append(sample)
-            continue
-
-        nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
-
-        # Check dedup against DB
-        existing_id = None
-        if email_addr:
-            existing_id = existing_emails.get(email_addr)
-        if not existing_id and nom and ville:
-            existing_id = existing_names.get((nom.lower(), ville.lower()))
-
-        # Check dedup against current batch
-        if not existing_id:
-            if email_addr and email_addr in batch_emails:
-                stats["skipped"] += 1
+        for pd_item in prospects_data:
+            try:
+                parsed = _parse_prospect_fields(pd_item)
+            except Exception:
+                stats["errors"] += 1
                 continue
-            if nom and ville and (nom.lower(), ville.lower()) in batch_names:
+
+            if not parsed:
+                stats["errors"] += 1
+                if len(stats["errorSamples"]) < 5:
+                    sample = {str(k): str(v)[:80] for k, v in list(pd_item.items())[:10]} if isinstance(pd_item, dict) else {"raw": str(pd_item)[:200]}
+                    stats["errorSamples"].append(sample)
+                continue
+
+            nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
+
+            is_dup = False
+            if email_addr and (email_addr in existing_emails or email_addr in batch_emails):
+                is_dup = True
+            if not is_dup and nom and ville and ((nom.lower(), ville.lower()) in existing_names or (nom.lower(), ville.lower()) in batch_names):
+                is_dup = True
+
+            if is_dup:
                 stats["skipped"] += 1
                 continue
 
-        if existing_id:
-            stats["skipped"] += 1
-            continue
+            p = Prospect(
+                nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
+                email=email_addr, telephone=parsed["telephone"], site_web=parsed["site"],
+                note_google=parsed["note"], nb_avis=parsed["avis"], status="new",
+                adresse=parsed["adresse"], google_maps=parsed["google_maps"],
+                linkedin_url=parsed["linkedin"],
+                unsubscribe_token=secrets.token_urlsafe(32),
+            )
+            _calculate_score(p)
+            batch.append(p)
 
-        p = Prospect(
-            nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
-            email=email_addr, telephone=parsed["telephone"], site_web=parsed["site"],
-            note_google=parsed["note"], nb_avis=parsed["avis"], status="new",
-            adresse=parsed["adresse"], google_maps=parsed["google_maps"],
-            linkedin_url=parsed["linkedin"],
-            unsubscribe_token=secrets.token_urlsafe(32),
-        )
-        _calculate_score(p)
-        batch.append(p)
+            if email_addr:
+                batch_emails.add(email_addr)
+            if nom and ville:
+                batch_names.add((nom.lower(), ville.lower()))
 
-        if email_addr:
-            batch_emails.add(email_addr)
-        if nom and ville:
-            batch_names.add((nom.lower(), ville.lower()))
+            stats["imported"] += 1
 
-        stats["imported"] += 1
+            if len(batch) >= 200:
+                db.session.add_all(batch)
+                db.session.commit()
+                batch = []
 
-        if len(batch) >= 500:
+        if batch:
             db.session.add_all(batch)
             db.session.commit()
-            batch = []
+        return jsonify({"ok": True, **stats})
 
-    if batch:
-        db.session.add_all(batch)
-    db.session.commit()
-    return jsonify({"ok": True, **stats})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": f"Erreur serveur: {str(e)[:300]}", "imported": 0, "errors": 0}), 500
 
 # --- API: Open Tracking (pixel) -----------------------------------------------
 @app.route("/api/track/<tracking_id>")
