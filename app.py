@@ -1115,11 +1115,14 @@ def import_prospects():
                     continue
 
             p = Prospect(
-                nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
-                email=email_addr, telephone=parsed["telephone"], site_web=parsed["site"],
+                nom=nom[:200], type=(parsed["type"] or "autre")[:80], ville=ville[:100],
+                region=(parsed["region"] or "")[:100],
+                email=email_addr[:200], telephone=(parsed["telephone"] or "")[:30],
+                site_web=(parsed["site"] or "")[:300],
                 note_google=parsed["note"], nb_avis=parsed["avis"], status="new",
-                adresse=parsed["adresse"], google_maps=parsed["google_maps"],
-                linkedin_url=parsed["linkedin"],
+                adresse=(parsed["adresse"] or "")[:300],
+                google_maps=(parsed["google_maps"] or "")[:500],
+                linkedin_url=(parsed["linkedin"] or "")[:300],
                 unsubscribe_token=secrets.token_urlsafe(32),
             )
             _calculate_score(p)
