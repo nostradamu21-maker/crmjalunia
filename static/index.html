@@ -852,7 +852,15 @@ function ImportView(){
     }
   };
 
-  const CHUNK=500;
+  const CHUNK=200;
+  const sendChunk=async(chunk)=>{
+    const blob=new Blob([JSON.stringify({prospects:chunk})],{type:"application/json"});
+    const res=await fetch("/api/import",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:blob});
+    if(res.status===401){setToken("");throw new Error("Non autorise");}
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error||"Erreur");
+    return data;
+  };
   const importChunked=async(prospects)=>{
     setImporting(true);setResult(null);
     const totals={imported:0,skipped:0,updated:0,errors:0};
@@ -861,7 +869,7 @@ function ImportView(){
     showToast("⏳","Import de "+prospects.length+" prospects en "+chunks.length+" lots...","#00f0ff");
     for(let i=0;i<chunks.length;i++){
       try{
-        const r=await api("/import",{method:"POST",body:JSON.stringify({prospects:chunks[i]})});
+        const r=await sendChunk(chunks[i]);
         totals.imported+=r.imported||0;totals.skipped+=r.skipped||0;totals.updated+=r.updated||0;totals.errors+=r.errors||0;
         showToast("📦","Lot "+(i+1)+"/"+chunks.length+" — "+totals.imported+" importes","#00f0ff");
       }catch(e){showToast("💀","Lot "+(i+1)+" echec: "+e.message,"#ef4444");totals.errors+=chunks[i].length;}
