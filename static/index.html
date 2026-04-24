@@ -359,6 +359,39 @@ function ProspectTable({onSelect}){
   const searchTimeout=useRef(null);
   const[enriching,setEnriching]=useState(false);
   const[enrichResult,setEnrichResult]=useState(null);
+  const[enrichAuto,setEnrichAuto]=useState(false);
+  const[enrichTotal,setEnrichTotal]=useState({found:0,processed:0});
+  const[countdown,setCountdown]=useState(0);
+  const enrichAutoRef=useRef(false);
+  const countdownRef=useRef(null);
+
+  const runOneEnrich=async()=>{
+    setEnriching(true);setCountdown(0);
+    try{
+      const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:20})});
+      setEnrichResult(r);load();
+      setEnrichTotal(prev=>({found:prev.found+(r.found||0),processed:prev.processed+(r.processed||0)}));
+      if(r.found>0)showToast("📧",r.found+" emails trouves ! "+r.remaining+" restants","#00ff88");
+      else showToast("🔍","0 email ce lot — "+r.remaining+" restants","#64748b");
+      setEnriching(false);
+      if(enrichAutoRef.current&&r.remaining>0){
+        setCountdown(10);
+        let c=10;
+        countdownRef.current=setInterval(()=>{c--;setCountdown(c);if(c<=0){clearInterval(countdownRef.current);if(enrichAutoRef.current)runOneEnrich();}},1000);
+      }else if(r.remaining===0){
+        enrichAutoRef.current=false;setEnrichAuto(false);
+        showToast("✅","Terminé ! Plus de prospects sans email","#00ff88");launchConfetti();
+      }
+    }catch(e){showToast("💀",e.message,"#ef4444");setEnriching(false);
+      if(enrichAutoRef.current){setCountdown(10);let c=10;
+        countdownRef.current=setInterval(()=>{c--;setCountdown(c);if(c<=0){clearInterval(countdownRef.current);if(enrichAutoRef.current)runOneEnrich();}},1000);}
+    }
+  };
+
+  const toggleEnrichAuto=()=>{
+    if(enrichAuto){enrichAutoRef.current=false;setEnrichAuto(false);clearInterval(countdownRef.current);setCountdown(0);showToast("⏸","Scraping en pause","#64748b");}
+    else{enrichAutoRef.current=true;setEnrichAuto(true);setEnrichTotal({found:0,processed:0});runOneEnrich();}
+  };
 
   const[sortScore,setSortScore]=useState(false);
   const load=useCallback(()=>{
@@ -402,33 +435,17 @@ function ProspectTable({onSelect}){
         fetch("/api/export?"+params,{headers:{"Authorization":"Bearer "+TOKEN}})
           .then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="prospects.csv";a.click();});
       },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-gray-500"},"📥 CSV"),
-      h("button",{onClick:async()=>{
-        setEnriching(true);setEnrichResult(null);
-        showToast("🔍","Recherche d'emails en cours...","#a855f7");
-        try{const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:20})});
-          setEnrichResult(r);load();
-          if(r.found>0)showToast("📧",r.found+" emails trouves ! "+r.remaining+" prospects restants","#00ff88");
-          else showToast("😔","Aucun email trouve sur ce lot. "+r.remaining+" restants","#64748b");
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-        setEnriching(false);
-      },disabled:enriching,
-        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(enriching?"border-purple-500 text-purple-400 animate-pulse":"border-purple-500/40 text-purple-400 hover:border-purple-400")},
-        enriching?"🔍 Recherche...":"🔍 Trouver emails"),
+      h("button",{onClick:toggleEnrichAuto,
+        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(enrichAuto?"border-red-500/40 text-red-400 hover:border-red-400":"border-purple-500/40 text-purple-400 hover:border-purple-400")+(enriching?" animate-pulse":"")},
+        enrichAuto?(enriching?"🔍 Scraping...":(countdown>0?"⏳ Prochain lot dans "+countdown+"s":"🔍 Scraping...")):"🔍 Trouver emails"),
       h("span",{className:"text-sm text-gray-500 ml-auto"},data.total.toLocaleString("fr-FR")+" prospects"),
-      enrichResult?h("span",{className:"text-xs text-neonGreen ml-2"},enrichResult.found+" emails trouves"):null),
-    enrichResult&&enrichResult.found>0?h("div",{className:"mb-4 p-3 card-dark flex items-center justify-between"},
+      enrichTotal.found>0?h("span",{className:"text-xs text-neonGreen ml-2"},"📧 "+enrichTotal.found+" trouves / "+enrichTotal.processed+" scannes"):null),
+    enrichResult?h("div",{className:"mb-4 p-3 card-dark flex items-center justify-between"},
       h("div",{className:"text-sm"},
-        h("span",{className:"text-neonGreen font-bold"},enrichResult.found+" emails trouves"),
-        h("span",{className:"text-gray-500 mx-2"},"sur "+enrichResult.processed+" sites scannes"),
-        enrichResult.remaining>0?h("span",{className:"text-gray-500"},"— "+enrichResult.remaining+" prospects sans email restants"):null),
-      enrichResult.remaining>0?h("button",{onClick:async()=>{
-        setEnriching(true);
-        try{const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:20})});
-          setEnrichResult(r);load();showToast("📧",r.found+" emails trouves ! "+r.remaining+" restants","#00ff88");
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-        setEnriching(false);
-      },disabled:enriching,className:"px-3 py-2 text-sm font-bold text-neon border border-neon/30 rounded-lg hover:bg-neon/10"},
-        enriching?"Recherche...":"Continuer (20 suivants)"):null):null,
+        h("span",{className:"text-neonGreen font-bold"},"📧 "+enrichTotal.found+" emails trouves"),
+        h("span",{className:"text-gray-500 mx-2"},"sur "+enrichTotal.processed+" sites scannes"),
+        enrichResult.remaining>0?h("span",{className:"text-gray-500"},"— "+enrichResult.remaining+" restants"):h("span",{className:"text-neonGreen"},"✅ Termine !")),
+      enrichAuto?h("span",{className:"text-xs text-purple-400 animate-pulse"},"Auto-scraping actif"):null):null,
     loading?h("div",{className:"text-center py-12 text-gray-500"},"Chargement..."):
     h("div",null,
       h("div",{className:"overflow-x-auto rounded-xl border border-gray-800"},
