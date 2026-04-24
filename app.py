@@ -174,6 +174,68 @@ def _render_template(text, prospect):
 def _is_valid_email(email):
     return bool(email and re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email.strip()))
 
+# MX record cache to avoid repeated DNS lookups
+_mx_cache = {}
+
+def _check_mx(email):
+    """Check if the email domain has valid MX records. Returns True if valid."""
+    if not email or "@" not in email:
+        return False
+    domain = email.strip().lower().split("@")[1]
+    if domain in _mx_cache:
+        return _mx_cache[domain]
+    try:
+        import dns.resolver
+        answers = dns.resolver.resolve(domain, "MX")
+        valid = len(answers) > 0
+        _mx_cache[domain] = valid
+        return valid
+    except Exception:
+        _mx_cache[domain] = False
+        return False
+
+def _is_blacklisted(email):
+    """Check if email domain is in the blacklist."""
+    if not email:
+        return True
+    domain = email.strip().lower().split("@")[-1]
+    blacklist_raw = Setting.get("domain_blacklist", "")
+    if not blacklist_raw:
+        return False
+    blacklist = [d.strip().lower() for d in blacklist_raw.split(",") if d.strip()]
+    return domain in blacklist
+
+def _get_warmup_limit():
+    """Calculate daily send limit based on warmup schedule."""
+    warmup = Setting.get("warmup_enabled", "false")
+    if warmup != "true":
+        return int(Setting.get("daily_limit", "30"))
+
+    start_str = Setting.get("warmup_start_date", "")
+    if not start_str:
+        Setting.set("warmup_start_date", datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        start_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    try:
+        start = datetime.strptime(start_str, "%Y-%m-%d")
+    except ValueError:
+        return int(Setting.get("daily_limit", "30"))
+
+    days = (datetime.now(timezone.utc) - start.replace(tzinfo=timezone.utc)).days
+    max_limit = int(Setting.get("daily_limit", "30"))
+
+    # Warmup schedule: gradual increase
+    if days < 3:
+        return min(5, max_limit)
+    elif days < 7:
+        return min(10, max_limit)
+    elif days < 14:
+        return min(20, max_limit)
+    elif days < 21:
+        return min(30, max_limit)
+    else:
+        return max_limit
+
 def _calculate_score(prospect):
     """Auto-score a prospect based on engagement signals."""
     s = 0
@@ -237,6 +299,17 @@ def _open_smtp_connection():
 
 def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_emails=None):
     """Send one email with tracking pixel + unsubscribe link. Returns (success, error_message)."""
+    # Blacklist check
+    if _is_blacklisted(prospect.email):
+        return False, "blacklisted"
+
+    # MX record check
+    if not _check_mx(prospect.email):
+        prospect.bounce_count = (prospect.bounce_count or 0) + 1
+        if prospect.bounce_count >= 2:
+            prospect.status = "bounced"
+        return False, "mx_invalid"
+
     # Duplicate detection
     if seen_emails is not None:
         email_lower = prospect.email.strip().lower()
@@ -617,7 +690,7 @@ def auto_send():
         return jsonify({"ok": True, "sent": 0, "failed": 0, "outsideHours": True,
                         "message": f"Hors heures d'envoi ({send_start}h-{send_end}h France). Il est {france_hour}h."})
 
-    daily_limit = int(Setting.get("daily_limit", "30"))
+    daily_limit = _get_warmup_limit()
     delay_email2 = int(Setting.get("delay_email2", "3"))
     delay_email3 = int(Setting.get("delay_email3", "5"))
     max_per_run = int(request.args.get("max", "15"))
@@ -666,7 +739,11 @@ def auto_send():
 
     for p in email2_candidates:
         if _is_valid_email(p.email):
-            queue.append((p, 2, p.email2_sujet, p.email2_corps))
+            subj = p.email2_sujet
+            # Conditional sequence: different subject for non-openers
+            if not p.email_opened:
+                subj = "Rappel : " + p.email2_sujet
+            queue.append((p, 2, subj, p.email2_corps))
 
     # Email 3: sent email 2, waited delay_email3 days
     cutoff3 = now - timedelta(days=delay_email3)
@@ -680,7 +757,10 @@ def auto_send():
 
     for p in email3_candidates:
         if _is_valid_email(p.email):
-            queue.append((p, 3, p.email3_sujet, p.email3_corps))
+            subj = p.email3_sujet
+            if not p.email_opened:
+                subj = "Dernier rappel : " + p.email3_sujet
+            queue.append((p, 3, subj, p.email3_corps))
 
     # Truncate to limits
     queue = queue[:min(remaining, max_per_run)]
@@ -818,6 +898,50 @@ def campaign_stats():
         "lastRun": last_run.to_dict() if last_run else None,
     })
 
+# --- API: Campaign History ----------------------------------------------------
+@app.route("/api/campaign/history")
+@require_auth
+def campaign_history():
+    runs = CampaignRun.query.order_by(CampaignRun.started_at.desc()).limit(20).all()
+    return jsonify({"runs": [r.to_dict() for r in runs]})
+
+# --- API: Onboarding status ---------------------------------------------------
+@app.route("/api/onboarding")
+@require_auth
+def onboarding():
+    """Returns setup completion status for the guided checklist."""
+    smtp_ok = bool(Setting.get("smtp_host", "") and Setting.get("smtp_user", ""))
+    imap_ok = bool(Setting.get("imap_host", ""))
+    has_prospects = Prospect.query.count() > 0
+    prospect_count = Prospect.query.count()
+    has_templates = bool(Setting.get("tpl_email1_sujet", ""))
+    templates_applied = Prospect.query.filter(
+        Prospect.email1_sujet != "", Prospect.email1_sujet.isnot(None)
+    ).count()
+    has_api_key = bool(Setting.get("google_places_api_key", ""))
+    warmup = Setting.get("warmup_enabled", "false") == "true"
+
+    return jsonify({
+        "steps": [
+            {"id": "smtp", "label": "Configurer l'envoi d'emails (SMTP)", "done": smtp_ok,
+             "help": "Allez dans Config > SMTP pour entrer vos identifiants email", "tab": "settings"},
+            {"id": "prospects", "label": "Importer des prospects", "done": has_prospects,
+             "help": "Utilisez Scraping ou Import pour ajouter vos prospects", "tab": "import",
+             "detail": f"{prospect_count} prospects" if has_prospects else "Aucun prospect"},
+            {"id": "templates", "label": "Ecrire les templates d'emails", "done": has_templates,
+             "help": "Allez dans Campagne pour rediger vos 3 emails de sequence", "tab": "campaign"},
+            {"id": "apply", "label": "Appliquer les templates aux prospects", "done": templates_applied > 0,
+             "help": "Dans Campagne, cliquez 'Appliquer aux prospects'", "tab": "campaign",
+             "detail": f"{templates_applied} prospects prets" if templates_applied > 0 else "Aucun"},
+            {"id": "imap", "label": "Configurer la reception (IMAP) — optionnel", "done": imap_ok,
+             "help": "Pour detecter les reponses automatiquement", "tab": "settings", "optional": True},
+            {"id": "api_key", "label": "Cle Google Places — optionnel", "done": has_api_key,
+             "help": "Pour scraper des prospects depuis Google", "tab": "settings", "optional": True},
+        ],
+        "ready": smtp_ok and has_prospects and has_templates and templates_applied > 0,
+        "warmup": warmup,
+    })
+
 # --- API: Bulk generate templates ---------------------------------------------
 @app.route("/api/bulk-generate-emails", methods=["POST"])
 @require_auth
@@ -860,7 +984,8 @@ def get_settings():
             "tpl_email1_sujet", "tpl_email1_corps",
             "tpl_email2_sujet", "tpl_email2_corps",
             "tpl_email3_sujet", "tpl_email3_corps",
-            "google_places_api_key"]
+            "google_places_api_key", "domain_blacklist",
+            "warmup_enabled", "warmup_start_date"]
     return jsonify({k: Setting.get(k, "") for k in keys})
 
 @app.route("/api/settings", methods=["POST"])
