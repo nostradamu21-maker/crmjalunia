@@ -1831,6 +1831,33 @@ def enrich_emails():
     db.session.commit()
     return jsonify({"ok": True, **results})
 
+# --- API: Hunter.io account info ----------------------------------------------
+@app.route("/api/hunter-credits")
+@require_auth
+def hunter_credits():
+    import requests as req
+    hunter_key = Setting.get("hunter_api_key", "")
+    if not hunter_key:
+        return jsonify({"error": "Cle Hunter.io non configuree"}), 400
+    try:
+        resp = req.get("https://api.hunter.io/v2/account", params={"api_key": hunter_key}, timeout=10)
+        if resp.status_code != 200:
+            return jsonify({"error": f"Hunter API erreur ({resp.status_code})"}), 400
+        data = resp.json().get("data", {})
+        requests_info = data.get("requests", {})
+        return jsonify({
+            "ok": True,
+            "email": data.get("email", ""),
+            "plan": data.get("plan_name", "Free"),
+            "used": requests_info.get("searches", {}).get("used", 0),
+            "available": requests_info.get("searches", {}).get("available", 0),
+            "verificationsUsed": requests_info.get("verifications", {}).get("used", 0),
+            "verificationsAvailable": requests_info.get("verifications", {}).get("available", 0),
+            "resetDate": data.get("reset_date", ""),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)[:200]}), 500
+
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])
 @require_auth
