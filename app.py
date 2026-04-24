@@ -40,6 +40,7 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = database_url
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+    app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB max upload
 
     db.init_app(app)
     CORS(app, origins=ALLOWED_ORIGINS)
@@ -1017,13 +1018,12 @@ def _extract_field(item, *keys):
             return str(v).strip() if isinstance(v, str) else v
     return ""
 
-def _import_one_prospect(pd_item, stats):
-    """Import a single prospect from any JSON format. Mutates stats dict."""
+def _parse_prospect_fields(pd_item):
+    """Parse a single prospect from any JSON format. Returns dict or None if invalid."""
     nom = _extract_field(pd_item, "n", "nom", "name", "Name", "Nom", "NOM", "etablissement", "Etablissement",
                          "business_name", "title", "Title")
     if not nom:
-        stats["errors"] += 1
-        return
+        return None
 
     email_addr = _extract_field(pd_item, "email", "Email", "EMAIL", "mail", "e-mail", "e_mail", "courriel").lower()
     ville = _extract_field(pd_item, "v", "ville", "Ville", "city", "City", "VILLE", "localite")
@@ -1050,55 +1050,91 @@ def _import_one_prospect(pd_item, stats):
     except (ValueError, TypeError):
         avis = 0
 
-    # Deduplication: by email OR nom+ville
-    existing = None
-    if email_addr:
-        existing = Prospect.query.filter(db.func.lower(Prospect.email) == email_addr).first()
-    if not existing and nom and ville:
-        existing = Prospect.query.filter(
-            db.func.lower(Prospect.nom) == nom.lower(),
-            db.func.lower(Prospect.ville) == ville.lower()
-        ).first()
+    return {"nom": nom, "email": email_addr, "ville": ville, "region": region, "type": type_,
+            "telephone": telephone, "site": site, "adresse": adresse, "google_maps": google_maps,
+            "note": note, "avis": avis, "linkedin": linkedin}
 
-    if existing:
-        updated = False
-        merges = [("email", email_addr), ("telephone", telephone), ("site_web", site),
-                  ("adresse", adresse), ("note_google", note), ("nb_avis", avis),
-                  ("google_maps", google_maps), ("linkedin_url", linkedin)]
-        for attr, val in merges:
-            if val and not getattr(existing, attr):
-                setattr(existing, attr, val)
-                updated = True
-        stats["updated" if updated else "skipped"] += 1
-        return
-
-    p = Prospect(
-        nom=nom, type=type_ or "autre", ville=ville, region=region,
-        email=email_addr, telephone=telephone, site_web=site,
-        note_google=note, nb_avis=avis, status="new",
-        adresse=adresse, google_maps=google_maps, linkedin_url=linkedin,
-        unsubscribe_token=secrets.token_urlsafe(32),
-    )
-    _calculate_score(p)
-    db.session.add(p)
-    stats["imported"] += 1
-
-# --- API: Import (smart dedup) ------------------------------------------------
+# --- API: Import (smart dedup — fast, in-memory) ------------------------------
 @app.route("/api/import", methods=["POST"])
 @require_auth
 def import_prospects():
-    data = request.get_json() or {}
-    prospects_data = data.get("prospects", [])
-    # Also accept root-level array
-    if not prospects_data and isinstance(data, list):
-        prospects_data = data
+    data = request.get_json(force=True, silent=True) or {}
+    prospects_data = data.get("prospects", []) if isinstance(data, dict) else data if isinstance(data, list) else []
+    if not prospects_data:
+        return jsonify({"error": "Aucun prospect"}), 400
+
     stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
 
-    for pd_item in prospects_data:
-        _import_one_prospect(pd_item, stats)
-        if stats["imported"] % 500 == 0 and stats["imported"] > 0:
-            db.session.commit()
+    # Preload existing emails + nom/ville into memory for fast dedup (1 query instead of 16000)
+    existing_emails = {}
+    for p in db.session.query(Prospect.id, Prospect.email).filter(
+            Prospect.email != "", Prospect.email.isnot(None)).all():
+        if p.email:
+            existing_emails[p.email.strip().lower()] = p.id
 
+    existing_names = {}
+    for p in db.session.query(Prospect.id, Prospect.nom, Prospect.ville).all():
+        if p.nom and p.ville:
+            existing_names[(p.nom.strip().lower(), p.ville.strip().lower())] = p.id
+
+    # Also track what we add in this batch to avoid self-duplicates
+    batch_emails = set()
+    batch_names = set()
+
+    batch = []
+    for pd_item in prospects_data:
+        parsed = _parse_prospect_fields(pd_item)
+        if not parsed:
+            stats["errors"] += 1
+            continue
+
+        nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
+
+        # Check dedup against DB
+        existing_id = None
+        if email_addr:
+            existing_id = existing_emails.get(email_addr)
+        if not existing_id and nom and ville:
+            existing_id = existing_names.get((nom.lower(), ville.lower()))
+
+        # Check dedup against current batch
+        if not existing_id:
+            if email_addr and email_addr in batch_emails:
+                stats["skipped"] += 1
+                continue
+            if nom and ville and (nom.lower(), ville.lower()) in batch_names:
+                stats["skipped"] += 1
+                continue
+
+        if existing_id:
+            stats["skipped"] += 1
+            continue
+
+        p = Prospect(
+            nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
+            email=email_addr, telephone=parsed["telephone"], site_web=parsed["site"],
+            note_google=parsed["note"], nb_avis=parsed["avis"], status="new",
+            adresse=parsed["adresse"], google_maps=parsed["google_maps"],
+            linkedin_url=parsed["linkedin"],
+            unsubscribe_token=secrets.token_urlsafe(32),
+        )
+        _calculate_score(p)
+        batch.append(p)
+
+        if email_addr:
+            batch_emails.add(email_addr)
+        if nom and ville:
+            batch_names.add((nom.lower(), ville.lower()))
+
+        stats["imported"] += 1
+
+        if len(batch) >= 500:
+            db.session.add_all(batch)
+            db.session.commit()
+            batch = []
+
+    if batch:
+        db.session.add_all(batch)
     db.session.commit()
     return jsonify({"ok": True, **stats})
 
@@ -1533,12 +1569,55 @@ def import_file():
     if not prospects_data:
         return jsonify({"error": "Aucun prospect dans le fichier"}), 400
 
+    # Redirect to the fast import logic
+    with app.test_request_context(json={"prospects": prospects_data}):
+        pass
+    # Use same fast import as /api/import
     stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
-
+    existing_emails = {}
+    for p in db.session.query(Prospect.id, Prospect.email).filter(
+            Prospect.email != "", Prospect.email.isnot(None)).all():
+        if p.email:
+            existing_emails[p.email.strip().lower()] = p.id
+    existing_names = {}
+    for p in db.session.query(Prospect.id, Prospect.nom, Prospect.ville).all():
+        if p.nom and p.ville:
+            existing_names[(p.nom.strip().lower(), p.ville.strip().lower())] = p.id
+    batch_emails = set()
+    batch_names = set()
+    batch = []
     for pd_item in prospects_data:
-        _import_one_prospect(pd_item, stats)
-        if stats["imported"] % 500 == 0 and stats["imported"] > 0:
+        parsed = _parse_prospect_fields(pd_item)
+        if not parsed:
+            stats["errors"] += 1
+            continue
+        nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
+        existing_id = existing_emails.get(email_addr) if email_addr else None
+        if not existing_id and nom and ville:
+            existing_id = existing_names.get((nom.lower(), ville.lower()))
+        if not existing_id:
+            if (email_addr and email_addr in batch_emails) or (nom and ville and (nom.lower(), ville.lower()) in batch_names):
+                stats["skipped"] += 1
+                continue
+        if existing_id:
+            stats["skipped"] += 1
+            continue
+        p = Prospect(nom=nom, type=parsed["type"] or "autre", ville=ville, region=parsed["region"],
+                     email=email_addr, telephone=parsed["telephone"], site_web=parsed["site"],
+                     note_google=parsed["note"], nb_avis=parsed["avis"], status="new",
+                     adresse=parsed["adresse"], google_maps=parsed["google_maps"],
+                     linkedin_url=parsed["linkedin"], unsubscribe_token=secrets.token_urlsafe(32))
+        _calculate_score(p)
+        batch.append(p)
+        if email_addr: batch_emails.add(email_addr)
+        if nom and ville: batch_names.add((nom.lower(), ville.lower()))
+        stats["imported"] += 1
+        if len(batch) >= 500:
+            db.session.add_all(batch)
             db.session.commit()
+            batch = []
+    if batch:
+        db.session.add_all(batch)
 
     db.session.commit()
     return jsonify({"ok": True, **stats})
