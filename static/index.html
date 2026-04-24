@@ -878,6 +878,7 @@ function ImportView(){
       try{
         const r=await sendChunk(chunks[i]);
         totals.imported+=r.imported||0;totals.skipped+=r.skipped||0;totals.updated+=r.updated||0;totals.errors+=r.errors||0;
+        if(r.errorSamples&&r.errorSamples.length>0&&!totals.errorSamples)totals.errorSamples=r.errorSamples;
         showToast("📦","Lot "+(i+1)+"/"+chunks.length+" — "+totals.imported+" importes","#00f0ff");
       }catch(e){showToast("💀","Lot "+(i+1)+" echec: "+e.message,"#ef4444");totals.errors+=chunks[i].length;}
     }
@@ -935,7 +936,11 @@ function ImportView(){
         h("div",null,h("div",{className:"text-2xl font-black text-neonGreen"},result.imported),h("div",{className:"text-xs text-gray-500"},"Importes")),
         h("div",null,h("div",{className:"text-2xl font-black text-neonYellow"},result.updated),h("div",{className:"text-xs text-gray-500"},"Mis a jour")),
         h("div",null,h("div",{className:"text-2xl font-black text-gray-500"},result.skipped),h("div",{className:"text-xs text-gray-500"},"Doublons")),
-        h("div",null,h("div",{className:"text-2xl font-black text-red-400"},result.errors),h("div",{className:"text-xs text-gray-500"},"Erreurs")))):null
+        h("div",null,h("div",{className:"text-2xl font-black text-red-400"},result.errors),h("div",{className:"text-xs text-gray-500"},"Erreurs"))),
+      result.errorSamples&&result.errorSamples.length>0?h("div",{className:"mt-4 pt-4 border-t border-gray-800"},
+        h("div",{className:"text-xs text-gray-500 mb-2"},"Exemples de lignes en erreur (nom non trouve) :"),
+        h("div",{className:"space-y-2"},result.errorSamples.map((s,i)=>
+          h("pre",{key:i,className:"text-xs text-red-400 bg-gray-900 p-2 rounded overflow-x-auto"},JSON.stringify(s,null,0))))):null):null
   );
 }
 

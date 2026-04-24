@@ -1063,7 +1063,7 @@ def import_prospects():
     if not prospects_data:
         return jsonify({"error": "Aucun prospect"}), 400
 
-    stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
+    stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0, "errorSamples": []}
 
     # Preload existing emails + nom/ville into memory for fast dedup (1 query instead of 16000)
     existing_emails = {}
@@ -1086,6 +1086,13 @@ def import_prospects():
         parsed = _parse_prospect_fields(pd_item)
         if not parsed:
             stats["errors"] += 1
+            if len(stats["errorSamples"]) < 5:
+                sample = {}
+                if isinstance(pd_item, dict):
+                    sample = {str(k): str(v)[:80] for k, v in list(pd_item.items())[:10]}
+                else:
+                    sample = {"raw": str(pd_item)[:200]}
+                stats["errorSamples"].append(sample)
             continue
 
         nom, email_addr, ville = parsed["nom"], parsed["email"], parsed["ville"]
