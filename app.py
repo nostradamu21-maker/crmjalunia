@@ -1019,26 +1019,26 @@ def _extract_field(item, *keys):
 
 def _import_one_prospect(pd_item, stats):
     """Import a single prospect from any JSON format. Mutates stats dict."""
-    nom = _extract_field(pd_item, "nom", "name", "Name", "Nom", "NOM", "etablissement", "Etablissement",
+    nom = _extract_field(pd_item, "n", "nom", "name", "Name", "Nom", "NOM", "etablissement", "Etablissement",
                          "business_name", "title", "Title")
     if not nom:
         stats["errors"] += 1
         return
 
     email_addr = _extract_field(pd_item, "email", "Email", "EMAIL", "mail", "e-mail", "e_mail", "courriel").lower()
-    ville = _extract_field(pd_item, "ville", "Ville", "city", "City", "VILLE", "localite")
-    region = _extract_field(pd_item, "region", "Region", "REGION", "departement", "state", "province") or ville
-    type_ = _extract_field(pd_item, "type", "Type", "TYPE", "categorie", "category", "activite")
-    telephone = _extract_field(pd_item, "telephone", "Telephone", "phone", "Phone", "tel", "Tel", "TEL",
+    ville = _extract_field(pd_item, "v", "ville", "Ville", "city", "City", "VILLE", "localite")
+    region = _extract_field(pd_item, "r", "region", "Region", "REGION", "departement", "state", "province") or ville
+    type_ = _extract_field(pd_item, "t", "type", "Type", "TYPE", "categorie", "category", "activite")
+    telephone = _extract_field(pd_item, "tel", "telephone", "Telephone", "phone", "Phone", "Tel", "TEL",
                                "formatted_phone_number", "phone_number")
-    site = _extract_field(pd_item, "site", "site_web", "Site Web", "Site_web", "website", "Website",
+    site = _extract_field(pd_item, "w", "site", "site_web", "Site Web", "Site_web", "website", "Website",
                           "url", "URL", "site_internet", "web")
-    adresse = _extract_field(pd_item, "adresse", "Adresse", "address", "Address", "formatted_address",
+    adresse = _extract_field(pd_item, "a", "adresse", "Adresse", "address", "Address", "formatted_address",
                              "adresse_complete", "ADRESSE")
-    google_maps = _extract_field(pd_item, "googleMaps", "google_maps", "Google Maps", "maps_url", "url_maps",
+    google_maps = _extract_field(pd_item, "gm", "googleMaps", "google_maps", "Google Maps", "maps_url", "url_maps",
                                  "lien_google", "gmaps")
-    note = pd_item.get("note") or pd_item.get("note_google") or pd_item.get("Note Google") or pd_item.get("rating") or pd_item.get("Rating") or 0
-    avis = pd_item.get("avis") or pd_item.get("nb_avis") or pd_item.get("Avis") or pd_item.get("user_ratings_total") or pd_item.get("reviews") or 0
+    note = pd_item.get("ng") or pd_item.get("note") or pd_item.get("note_google") or pd_item.get("Note Google") or pd_item.get("rating") or pd_item.get("Rating") or 0
+    avis = pd_item.get("na") or pd_item.get("avis") or pd_item.get("nb_avis") or pd_item.get("Avis") or pd_item.get("user_ratings_total") or pd_item.get("reviews") or 0
     linkedin = _extract_field(pd_item, "linkedin", "LinkedIn", "linkedin_url", "linkedinUrl")
 
     try:
