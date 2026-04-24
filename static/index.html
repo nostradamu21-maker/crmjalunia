@@ -216,13 +216,17 @@ function Dashboard({onNav}){
   const[analytics,setAnalytics]=useState(null);
   const[onboarding,setOnboarding]=useState(null);
   const[loading,setLoading]=useState(true);
+  const[loadErr,setLoadErr]=useState("");
   useEffect(()=>{
-    Promise.all([api("/prospects/stats"),api("/analytics/emails").catch(()=>null),api("/onboarding").catch(()=>null)])
-      .then(([s,a,o])=>{setStats(s);setAnalytics(a);setOnboarding(o);}).catch(()=>{}).finally(()=>setLoading(false));
+    Promise.all([api("/prospects/stats").catch(e=>{setLoadErr(e.message);return null}),api("/analytics/emails").catch(()=>null),api("/onboarding").catch(()=>null)])
+      .then(([s,a,o])=>{setStats(s);setAnalytics(a);setOnboarding(o);}).catch(e=>setLoadErr(e.message)).finally(()=>setLoading(false));
   },[]);
 
   if(loading)return h("div",{className:"text-center py-20 text-gray-500"},"Chargement...");
-  if(!stats)return h("div",{className:"text-center py-20 text-red-400"},"Erreur de chargement");
+  if(!stats)return h("div",{className:"text-center py-20"},
+    h("div",{className:"text-red-400 mb-2"},"Erreur de chargement"),
+    loadErr?h("div",{className:"text-xs text-gray-500"},loadErr):null,
+    h("button",{onClick:()=>location.reload(),className:"mt-3 px-4 py-2 border border-gray-700 rounded-lg text-sm text-gray-400 hover:border-neon"},"Recharger"));
 
   const{total,withEmail,contacted,replied,meetings,converted,statusCounts,typeCounts,villeCounts,emailByType}=stats;
   const xp=calcXP(stats);const lv=getLevel(xp);const xpPct=getXpPct(xp);
@@ -272,7 +276,7 @@ function Dashboard({onNav}){
         h("span",null,a.emoji),h("span",{className:"font-gaming tracking-wider"},a.name)))):null,
 
     // Onboarding checklist
-    onboarding&&!onboarding.ready?h("div",{className:"card-dark epic p-6"},
+    onboarding&&onboarding.steps&&!onboarding.ready?h("div",{className:"card-dark epic p-6"},
       h("div",{className:"flex items-center gap-3 mb-4"},
         h("span",{className:"text-2xl"},"🚀"),
         h("div",null,
