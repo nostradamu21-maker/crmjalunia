@@ -855,21 +855,30 @@ function ImportView(){
   };
 
   const CHUNK=200;
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
   const sendChunk=(chunk)=>new Promise((resolve,reject)=>{
     const xhr=new XMLHttpRequest();
     xhr.open("POST","/api/import");
     xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
     xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
     xhr.onload=()=>{
-      if(xhr.status===401){reject(new Error("Session expiree"));return;}
-      try{const d=JSON.parse(xhr.responseText);if(xhr.status>=400)reject(new Error(d.error||"Erreur"));else resolve(d);}
-      catch(e){reject(new Error("Reponse invalide"));}
+      if(xhr.status===401||xhr.status===403){reject(new Error("Session expiree"));return;}
+      if(xhr.status===502||xhr.status===503||xhr.status===504){reject(new Error("Serveur occupe ("+xhr.status+")"));return;}
+      try{const d=JSON.parse(xhr.responseText);if(xhr.status>=400)reject(new Error(d.error||"Erreur "+xhr.status));else resolve(d);}
+      catch(e){reject(new Error("Erreur serveur ("+xhr.status+")"));}
     };
     xhr.onerror=()=>reject(new Error("Erreur reseau"));
     xhr.ontimeout=()=>reject(new Error("Timeout"));
-    xhr.timeout=60000;
+    xhr.timeout=90000;
     xhr.send(JSON.stringify({prospects:chunk}));
   });
+  const sendWithRetry=async(chunk,attempt)=>{
+    try{return await sendChunk(chunk);}
+    catch(e){
+      if(attempt<2){await wait(3000);return sendWithRetry(chunk,attempt+1);}
+      throw e;
+    }
+  };
   const importChunked=async(prospects)=>{
     setImporting(true);setResult(null);
     const totals={imported:0,skipped:0,updated:0,errors:0};
@@ -878,11 +887,13 @@ function ImportView(){
     showToast("⏳","Import de "+prospects.length+" prospects en "+chunks.length+" lots...","#00f0ff");
     for(let i=0;i<chunks.length;i++){
       try{
-        const r=await sendChunk(chunks[i]);
+        const r=await sendWithRetry(chunks[i],0);
         totals.imported+=r.imported||0;totals.skipped+=r.skipped||0;totals.updated+=r.updated||0;totals.errors+=r.errors||0;
         if(r.errorSamples&&r.errorSamples.length>0&&!totals.errorSamples)totals.errorSamples=r.errorSamples;
         showToast("📦","Lot "+(i+1)+"/"+chunks.length+" — "+totals.imported+" importes","#00f0ff");
       }catch(e){showToast("💀","Lot "+(i+1)+" echec: "+e.message,"#ef4444");totals.errors+=chunks[i].length;}
+      // Pause 1.5s between chunks to not overwhelm the server
+      if(i<chunks.length-1)await wait(1500);
     }
     setResult(totals);
     showToast("✅",totals.imported+" importes au total !","#00ff88");
