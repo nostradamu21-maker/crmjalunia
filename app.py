@@ -991,7 +991,7 @@ def get_settings():
             "tpl_email1_sujet", "tpl_email1_corps",
             "tpl_email2_sujet", "tpl_email2_corps",
             "tpl_email3_sujet", "tpl_email3_corps",
-            "google_places_api_key", "domain_blacklist",
+            "google_places_api_key", "hunter_api_key", "domain_blacklist",
             "warmup_enabled", "warmup_start_date"]
     return jsonify({k: Setting.get(k, "") for k in keys})
 
@@ -1627,16 +1627,180 @@ def import_file():
     return jsonify({"ok": True, **stats})
 
 # --- API: Enrich (scrape emails from websites) --------------------------------
+
+def _scrape_emails_from_site(site_url):
+    """Deep email scraping from a website. Returns (best_email, all_emails, method)."""
+    import requests as req
+    from bs4 import BeautifulSoup
+    from urllib.parse import urlparse
+
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+    skip_emails = {"example@email.com", "email@example.com", "your@email.com",
+                   "info@w3.org", "wixpress@gmail.com", "support@wix.com", "name@domain.com",
+                   "email@domain.com", "nom@email.com", "votre@email.com", "test@test.com"}
+    skip_domains = {"sentry.io", "googleapis.com", "w3.org", "schema.org", "facebook.com",
+                    "twitter.com", "instagram.com", "wix.com", "wordpress.org", "jquery.com",
+                    "cloudflare.com", "google.com", "gstatic.com", "bootstrapcdn.com"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
+    site = site_url.strip()
+    if not site.startswith("http"):
+        site = "https://" + site
+    base = site.rstrip("/")
+    parsed = urlparse(site)
+    domain = parsed.netloc.replace("www.", "")
+
+    found_emails = set()
+    method = ""
+
+    # Phase 1: Scrape multiple pages
+    pages = [site, base + "/contact", base + "/contactez-nous", base + "/nous-contacter",
+             base + "/a-propos", base + "/mentions-legales", base + "/legal",
+             base + "/qui-sommes-nous", base + "/equipe", base + "/team",
+             base + "/about", base + "/about-us", base + "/cgv",
+             base + "/reservation", base + "/booking", base + "/infos"]
+
+    for url in pages:
+        try:
+            resp = req.get(url, timeout=6, headers=headers, allow_redirects=True)
+            if resp.status_code != 200:
+                continue
+            text = resp.text[:150000]
+            soup = BeautifulSoup(text, "html.parser")
+
+            # mailto: links
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if href.startswith("mailto:"):
+                    em = href.replace("mailto:", "").split("?")[0].strip().lower()
+                    if _is_valid_email(em) and em not in skip_emails:
+                        found_emails.add(em)
+                        if not method:
+                            method = "mailto"
+
+            # JSON-LD structured data
+            for script in soup.find_all("script", type="application/ld+json"):
+                try:
+                    ld = json.loads(script.string or "")
+                    if isinstance(ld, list):
+                        ld = ld[0] if ld else {}
+                    for key in ["email", "contactPoint", "author"]:
+                        val = ld.get(key, "")
+                        if isinstance(val, str) and "@" in val:
+                            em = val.strip().lower()
+                            if _is_valid_email(em):
+                                found_emails.add(em)
+                                if not method:
+                                    method = "json-ld"
+                        elif isinstance(val, dict) and val.get("email"):
+                            em = val["email"].strip().lower()
+                            if _is_valid_email(em):
+                                found_emails.add(em)
+                                if not method:
+                                    method = "json-ld"
+                except Exception:
+                    pass
+
+            # Meta tags
+            for meta in soup.find_all("meta"):
+                content = (meta.get("content") or "")
+                if "@" in content:
+                    for em in email_pattern.findall(content):
+                        em = em.lower()
+                        if _is_valid_email(em) and em not in skip_emails:
+                            found_emails.add(em)
+                            if not method:
+                                method = "meta"
+
+            # Regex on full text
+            for em in email_pattern.findall(text):
+                em = em.lower().strip()
+                if not _is_valid_email(em) or em in skip_emails:
+                    continue
+                em_domain = em.split("@")[1]
+                if em_domain in skip_domains:
+                    continue
+                if any(x in em for x in [".png", ".jpg", ".gif", ".css", ".js", ".svg", ".woff"]):
+                    continue
+                found_emails.add(em)
+                if not method:
+                    method = "regex"
+
+            if found_emails:
+                break
+        except Exception:
+            continue
+
+    # Phase 2: If nothing found, try pattern generation + SMTP verification
+    if not found_emails and domain:
+        prefixes = ["contact", "info", "hello", "accueil", "reception", "reservation",
+                     "booking", "direction", "commercial", "bienvenue"]
+        for prefix in prefixes:
+            candidate = f"{prefix}@{domain}"
+            try:
+                if _check_mx(candidate):
+                    # Try SMTP RCPT TO verification
+                    import dns.resolver
+                    mx_records = dns.resolver.resolve(domain, "MX")
+                    mx_host = str(mx_records[0].exchange).rstrip(".")
+                    with smtplib.SMTP(mx_host, 25, timeout=5) as smtp:
+                        smtp.helo("verify.jalunia.com")
+                        smtp.mail("verify@jalunia.com")
+                        code, _ = smtp.rcpt(candidate)
+                        if code == 250:
+                            found_emails.add(candidate)
+                            method = "smtp-verify"
+                            break
+            except Exception:
+                continue
+
+    # Phase 3: Hunter.io API (if configured)
+    if not found_emails and domain:
+        hunter_key = Setting.get("hunter_api_key", "")
+        if hunter_key:
+            try:
+                import requests as req2
+                resp = req2.get(f"https://api.hunter.io/v2/domain-search",
+                               params={"domain": domain, "api_key": hunter_key}, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json().get("data", {})
+                    for email_obj in data.get("emails", [])[:3]:
+                        em = email_obj.get("value", "").lower()
+                        if _is_valid_email(em):
+                            found_emails.add(em)
+                            if not method:
+                                method = "hunter.io"
+            except Exception:
+                pass
+
+    # Pick best email
+    best_email = ""
+    if found_emails:
+        # Prioritize emails from the same domain
+        same_domain = [em for em in found_emails if em.endswith("@" + domain)]
+        pool = same_domain if same_domain else list(found_emails)
+
+        priority = ["contact@", "info@", "hello@", "accueil@", "reception@",
+                     "reservation@", "booking@", "direction@", "commercial@"]
+        for prefix in priority:
+            for em in pool:
+                if em.startswith(prefix):
+                    best_email = em
+                    break
+            if best_email:
+                break
+        if not best_email:
+            best_email = sorted(pool)[0]
+
+    return best_email, list(found_emails), method
+
 @app.route("/api/enrich-emails", methods=["POST"])
 @require_auth
 @limiter.limit("3 per minute")
 def enrich_emails():
     """Find emails from prospect websites. Processes N prospects per call."""
-    import requests as req
-    from bs4 import BeautifulSoup
-
     data = request.get_json() or {}
-    batch_size = min(int(data.get("batchSize", 20)), 30)
+    batch_size = min(int(data.get("batchSize", 15)), 20)
 
     prospects = Prospect.query.filter(
         Prospect.site_web != "", Prospect.site_web.isnot(None),
@@ -1652,64 +1816,17 @@ def enrich_emails():
         db.or_(Prospect.email == "", Prospect.email.is_(None)),
     ).count() - len(prospects)
 
-    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
-    skip_emails = {"example@email.com", "email@example.com", "your@email.com",
-                   "info@w3.org", "wixpress@gmail.com", "support@wix.com", "name@domain.com"}
-
     results = {"processed": 0, "found": 0, "remaining": remaining, "details": []}
 
     for p in prospects:
-        site = p.site_web.strip()
-        if not site.startswith("http"):
-            site = "https://" + site
-
-        found_emails = set()
-        base = site.rstrip("/")
-        pages = [site, base + "/contact", base + "/contactez-nous", base + "/nous-contacter",
-                 base + "/a-propos", base + "/mentions-legales"]
-
-        for url in pages:
-            try:
-                resp = req.get(url, timeout=8, headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                }, allow_redirects=True)
-                if resp.status_code != 200:
-                    continue
-                text = resp.text[:100000]
-                soup = BeautifulSoup(text, "html.parser")
-                for a in soup.find_all("a", href=True):
-                    if a["href"].startswith("mailto:"):
-                        em = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
-                        if _is_valid_email(em) and em not in skip_emails:
-                            found_emails.add(em)
-                for em in email_pattern.findall(text):
-                    em = em.lower().strip()
-                    if _is_valid_email(em) and em not in skip_emails:
-                        if not any(x in em for x in [".png", ".jpg", ".gif", ".css", ".js", "sentry", "webpack"]):
-                            found_emails.add(em)
-                if found_emails:
-                    break
-            except Exception:
-                continue
-
-        best_email = ""
-        if found_emails:
-            for prefix in ["contact@", "info@", "hello@", "accueil@", "reservation@", "booking@"]:
-                for em in found_emails:
-                    if em.startswith(prefix):
-                        best_email = em
-                        break
-                if best_email:
-                    break
-            if not best_email:
-                best_email = sorted(found_emails)[0]
-
+        best_email, all_emails, method = _scrape_emails_from_site(p.site_web)
         results["processed"] += 1
         if best_email:
             p.email = best_email[:200]
             _calculate_score(p)
             results["found"] += 1
-            results["details"].append({"nom": p.nom, "email": best_email})
+            results["details"].append({"nom": p.nom, "email": best_email, "method": method,
+                                        "allEmails": all_emails[:5]})
 
     db.session.commit()
     return jsonify({"ok": True, **results})

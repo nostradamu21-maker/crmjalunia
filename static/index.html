@@ -368,10 +368,12 @@ function ProspectTable({onSelect}){
   const runOneEnrich=async()=>{
     setEnriching(true);setCountdown(0);
     try{
-      const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:20})});
+      const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:15})});
       setEnrichResult(r);load();
       setEnrichTotal(prev=>({found:prev.found+(r.found||0),processed:prev.processed+(r.processed||0)}));
-      if(r.found>0)showToast("📧",r.found+" emails trouves ! "+r.remaining+" restants","#00ff88");
+      const methods=(r.details||[]).map(d=>d.method).filter(Boolean);
+      const mStr=methods.length?" via "+[...new Set(methods)].join(", "):"";
+      if(r.found>0)showToast("📧",r.found+" emails trouves"+mStr+" — "+r.remaining+" restants","#00ff88");
       else showToast("🔍","0 email ce lot — "+r.remaining+" restants","#64748b");
       setEnriching(false);
       if(enrichAutoRef.current&&r.remaining>0){
@@ -1120,10 +1122,12 @@ function SettingsView(){
 
       // Google API
       h("div",null,
-        h("h3",{className:"font-semibold text-gray-300 mb-3"},"🔑 API Google Places"),
+        h("h3",{className:"font-semibold text-gray-300 mb-3"},"🔑 API externes"),
         h("p",{className:"text-xs text-gray-600 mb-3 p-2 bg-gray-800/50 rounded-lg"},
-          "💡 Necessaire uniquement pour le scraping. Creez une cle sur console.cloud.google.com > API & Services > Credentials."),
-        h(Field,{label:"Cle API Google Places",k:"google_places_api_key"})),
+          "💡 Google Places: scraping de prospects. Hunter.io: trouver des emails par domaine (25/mois gratuit sur hunter.io)."),
+        h("div",{className:"grid grid-cols-2 gap-4"},
+          h(Field,{label:"Cle API Google Places",k:"google_places_api_key"}),
+          h(Field,{label:"Cle API Hunter.io (optionnel)",k:"hunter_api_key"}))),
 
       // Save button
       h("div",{className:"flex items-center gap-3 pt-2"},
