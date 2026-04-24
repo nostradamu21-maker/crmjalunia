@@ -853,14 +853,21 @@ function ImportView(){
   };
 
   const CHUNK=200;
-  const sendChunk=async(chunk)=>{
-    const blob=new Blob([JSON.stringify({prospects:chunk})],{type:"application/json"});
-    const res=await fetch("/api/import",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:blob});
-    if(res.status===401){setToken("");throw new Error("Non autorise");}
-    const data=await res.json();
-    if(!res.ok)throw new Error(data.error||"Erreur");
-    return data;
-  };
+  const sendChunk=(chunk)=>new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();
+    xhr.open("POST","/api/import");
+    xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
+    xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
+    xhr.onload=()=>{
+      if(xhr.status===401){setToken("");reject(new Error("Non autorise"));return;}
+      try{const d=JSON.parse(xhr.responseText);if(xhr.status>=400)reject(new Error(d.error||"Erreur"));else resolve(d);}
+      catch(e){reject(new Error("Reponse invalide"));}
+    };
+    xhr.onerror=()=>reject(new Error("Erreur reseau"));
+    xhr.ontimeout=()=>reject(new Error("Timeout"));
+    xhr.timeout=60000;
+    xhr.send(JSON.stringify({prospects:chunk}));
+  });
   const importChunked=async(prospects)=>{
     setImporting(true);setResult(null);
     const totals={imported:0,skipped:0,updated:0,errors:0};
