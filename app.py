@@ -1626,6 +1626,94 @@ def import_file():
     db.session.commit()
     return jsonify({"ok": True, **stats})
 
+# --- API: Enrich (scrape emails from websites) --------------------------------
+@app.route("/api/enrich-emails", methods=["POST"])
+@require_auth
+@limiter.limit("3 per minute")
+def enrich_emails():
+    """Find emails from prospect websites. Processes N prospects per call."""
+    import requests as req
+    from bs4 import BeautifulSoup
+
+    data = request.get_json() or {}
+    batch_size = min(int(data.get("batchSize", 20)), 30)
+
+    prospects = Prospect.query.filter(
+        Prospect.site_web != "", Prospect.site_web.isnot(None),
+        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+    ).limit(batch_size).all()
+
+    if not prospects:
+        return jsonify({"ok": True, "processed": 0, "found": 0, "remaining": 0,
+                        "message": "Aucun prospect avec site web sans email"})
+
+    remaining = Prospect.query.filter(
+        Prospect.site_web != "", Prospect.site_web.isnot(None),
+        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+    ).count() - len(prospects)
+
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+    skip_emails = {"example@email.com", "email@example.com", "your@email.com",
+                   "info@w3.org", "wixpress@gmail.com", "support@wix.com", "name@domain.com"}
+
+    results = {"processed": 0, "found": 0, "remaining": remaining, "details": []}
+
+    for p in prospects:
+        site = p.site_web.strip()
+        if not site.startswith("http"):
+            site = "https://" + site
+
+        found_emails = set()
+        base = site.rstrip("/")
+        pages = [site, base + "/contact", base + "/contactez-nous", base + "/nous-contacter",
+                 base + "/a-propos", base + "/mentions-legales"]
+
+        for url in pages:
+            try:
+                resp = req.get(url, timeout=8, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }, allow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+                text = resp.text[:100000]
+                soup = BeautifulSoup(text, "html.parser")
+                for a in soup.find_all("a", href=True):
+                    if a["href"].startswith("mailto:"):
+                        em = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
+                        if _is_valid_email(em) and em not in skip_emails:
+                            found_emails.add(em)
+                for em in email_pattern.findall(text):
+                    em = em.lower().strip()
+                    if _is_valid_email(em) and em not in skip_emails:
+                        if not any(x in em for x in [".png", ".jpg", ".gif", ".css", ".js", "sentry", "webpack"]):
+                            found_emails.add(em)
+                if found_emails:
+                    break
+            except Exception:
+                continue
+
+        best_email = ""
+        if found_emails:
+            for prefix in ["contact@", "info@", "hello@", "accueil@", "reservation@", "booking@"]:
+                for em in found_emails:
+                    if em.startswith(prefix):
+                        best_email = em
+                        break
+                if best_email:
+                    break
+            if not best_email:
+                best_email = sorted(found_emails)[0]
+
+        results["processed"] += 1
+        if best_email:
+            p.email = best_email[:200]
+            _calculate_score(p)
+            results["found"] += 1
+            results["details"].append({"nom": p.nom, "email": best_email})
+
+    db.session.commit()
+    return jsonify({"ok": True, **results})
+
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])
 @require_auth
