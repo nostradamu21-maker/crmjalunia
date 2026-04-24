@@ -27,7 +27,7 @@ from flask_limiter.util import get_remote_address
 from models import db, Prospect, EmailLog, Setting, CampaignRun
 
 # --- App Config ---------------------------------------------------------------
-JWT_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", "24"))
+JWT_EXPIRATION_HOURS = int(os.environ.get("JWT_EXPIRATION_HOURS", "168"))  # 7 days
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "https://crmjalunia.onrender.com").split(",")
 
 def create_app():
@@ -497,6 +497,12 @@ def login():
         token = _create_token()
         return jsonify({"token": token, "ok": True})
     return jsonify({"error": "Mot de passe incorrect"}), 401
+
+@app.route("/api/refresh-token", methods=["POST"])
+@require_auth
+def refresh_token():
+    token = _create_token()
+    return jsonify({"token": token, "ok": True})
 
 # --- API: Prospects -----------------------------------------------------------
 @app.route("/api/prospects")

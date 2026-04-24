@@ -149,11 +149,13 @@ let TOKEN=localStorage.getItem("crm_token")||"";
 const setToken=(t)=>{TOKEN=t;if(t)localStorage.setItem("crm_token",t);else localStorage.removeItem("crm_token");};
 const api=async(path,opts={})=>{
   const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,...(opts.headers||{})}});
-  if(res.status===401){setToken("");throw new Error("Non autorisé");}
+  if(res.status===401&&path!=="/refresh-token"){setToken("");location.reload();throw new Error("Session expiree — reconnexion");}
   const data=await res.json();
   if(!res.ok)throw new Error(data.error||"Erreur");
   return data;
 };
+// Auto-refresh token every 30 min to avoid expiration
+setInterval(async()=>{if(!TOKEN)return;try{const r=await api("/refresh-token",{method:"POST"});if(r.token)setToken(r.token);}catch(e){}},30*60*1000);
 
 // ─── Login ───────────────────────────────────────────────────────────────────
 function Login({onLogin}){
@@ -859,7 +861,7 @@ function ImportView(){
     xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
     xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
     xhr.onload=()=>{
-      if(xhr.status===401){setToken("");reject(new Error("Non autorise"));return;}
+      if(xhr.status===401){reject(new Error("Session expiree"));return;}
       try{const d=JSON.parse(xhr.responseText);if(xhr.status>=400)reject(new Error(d.error||"Erreur"));else resolve(d);}
       catch(e){reject(new Error("Reponse invalide"));}
     };
