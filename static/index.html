@@ -834,14 +834,32 @@ function ImportView(){
   const[result,setResult]=useState(null);
   const fileRef=useRef(null);
 
+  const parseJson=txt=>{
+    txt=txt.trim();
+    // Remove BOM
+    if(txt.charCodeAt(0)===0xFEFF)txt=txt.slice(1);
+    // Try to fix common issues: trailing comma, missing bracket
+    if(!txt.endsWith("]")&&!txt.endsWith("}"))txt+="]";
+    try{
+      let d=JSON.parse(txt);
+      if(Array.isArray(d))return d;
+      if(d.prospects&&Array.isArray(d.prospects))return d.prospects;
+      if(typeof d==="object")return[d];
+      return null;
+    }catch(e){
+      // Try wrapping in array
+      try{return JSON.parse("["+txt+"]");}catch(e2){return null;}
+    }
+  };
+
   const importJson=async()=>{
     setImporting(true);setResult(null);
     try{
-      let prospects;
-      try{prospects=JSON.parse(jsonText);if(!Array.isArray(prospects))prospects=prospects.prospects||[];}
-      catch(e){showToast("💀","JSON invalide","#ef4444");setImporting(false);return;}
+      const prospects=parseJson(jsonText);
+      if(!prospects||prospects.length===0){showToast("💀","JSON invalide ou vide. Verifiez le format.","#ef4444");setImporting(false);return;}
+      showToast("⏳","Import de "+prospects.length+" prospects en cours...","#00f0ff");
       const r=await api("/import",{method:"POST",body:JSON.stringify({prospects})});
-      setResult(r);showToast("✅",r.imported+" prospects importes","#00ff88");
+      setResult(r);showToast("✅",r.imported+" importes, "+r.updated+" mis a jour, "+r.errors+" erreurs","#00ff88");
       if(r.imported>10)launchConfetti();
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setImporting(false);
@@ -850,13 +868,17 @@ function ImportView(){
   const importFile=async(e)=>{
     const file=e.target.files[0];if(!file)return;
     setImporting(true);setResult(null);
-    const fd=new FormData();fd.append("file",file);
-    try{const res=await fetch("/api/import/file",{method:"POST",headers:{"Authorization":"Bearer "+TOKEN},body:fd});
-      const r=await res.json();if(!res.ok)throw new Error(r.error||"Erreur");
-      setResult(r);showToast("✅",r.imported+" prospects importes","#00ff88");
+    try{
+      // Read file as text, then parse and send as JSON — avoids multipart issues
+      const text=await file.text();
+      const prospects=parseJson(text);
+      if(!prospects||prospects.length===0){showToast("💀","Fichier invalide ou vide","#ef4444");setImporting(false);return;}
+      showToast("⏳","Import de "+prospects.length+" prospects en cours...","#00f0ff");
+      const r=await api("/import",{method:"POST",body:JSON.stringify({prospects})});
+      setResult(r);showToast("✅",r.imported+" importes, "+r.updated+" mis a jour","#00ff88");
       if(r.imported>10)launchConfetti();
     }catch(e){showToast("💀",e.message,"#ef4444");}
-    setImporting(false);
+    setImporting(false);if(fileRef.current)fileRef.current.value="";
   };
 
   return h("div",{className:"max-w-3xl mx-auto fade space-y-6",style:{position:"relative",zIndex:1}},
@@ -880,7 +902,7 @@ function ImportView(){
       h("p",{className:"text-xs text-gray-500 mb-3"},"Formats acceptes: JSON, CSV (colonnes: nom, ville, email, type, telephone, site, note, avis)"),
       h("div",{className:"border-2 border-dashed border-gray-700 rounded-xl p-8 text-center hover:border-neon/40 transition-colors cursor-pointer",
         onClick:()=>fileRef.current&&fileRef.current.click()},
-        h("input",{ref:fileRef,type:"file",accept:".json,.csv",onChange:importFile,className:"hidden"}),
+        h("input",{ref:fileRef,type:"file",accept:".json,.csv,.txt",onChange:importFile,className:"hidden"}),
         h("div",{className:"text-4xl mb-3"},"📁"),
         h("div",{className:"text-sm text-gray-400"},importing?"Import en cours...":"Cliquez pour selectionner un fichier"),
         h("div",{className:"text-xs text-gray-600 mt-1"},".json ou .csv"))):null,
