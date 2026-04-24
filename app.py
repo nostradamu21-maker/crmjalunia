@@ -859,7 +859,8 @@ def get_settings():
             "send_hour_start", "send_hour_end", "base_url",
             "tpl_email1_sujet", "tpl_email1_corps",
             "tpl_email2_sujet", "tpl_email2_corps",
-            "tpl_email3_sujet", "tpl_email3_corps"]
+            "tpl_email3_sujet", "tpl_email3_corps",
+            "google_places_api_key"]
     return jsonify({k: Setting.get(k, "") for k in keys})
 
 @app.route("/api/settings", methods=["POST"])
@@ -1088,6 +1089,358 @@ def export_prospects():
     return Response(output.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=prospects_jalunia.csv"})
 
+# --- API: Test SMTP -----------------------------------------------------------
+@app.route("/api/test-smtp", methods=["POST"])
+@require_auth
+def test_smtp():
+    """Test SMTP connection with current settings."""
+    cfg = _get_smtp_config()
+    if not cfg["host"] or not cfg["user"]:
+        return jsonify({"error": "SMTP non configure"}), 400
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(cfg["host"], cfg["port"], timeout=10) as server:
+            server.starttls(context=context)
+            server.login(cfg["user"], cfg["password"])
+        return jsonify({"ok": True, "message": f"Connexion SMTP OK ({cfg['host']}:{cfg['port']})"})
+    except smtplib.SMTPAuthenticationError:
+        return jsonify({"error": "Erreur d'authentification SMTP (user/pass incorrect)"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Connexion impossible: {str(e)[:200]}"}), 400
+
+# --- API: Test IMAP -----------------------------------------------------------
+@app.route("/api/test-imap", methods=["POST"])
+@require_auth
+def test_imap():
+    imap_host = Setting.get("imap_host", "")
+    imap_port = int(Setting.get("imap_port", "993"))
+    imap_user = Setting.get("imap_user", Setting.get("smtp_user", ""))
+    imap_pass = Setting.get("imap_pass", Setting.get("smtp_pass", ""))
+    if not imap_host or not imap_user:
+        return jsonify({"error": "IMAP non configure"}), 400
+    try:
+        mail = imaplib.IMAP4_SSL(imap_host, imap_port)
+        mail.login(imap_user, imap_pass)
+        mail.select("INBOX")
+        _, msgs = mail.search(None, "ALL")
+        total = len(msgs[0].split()) if msgs[0] else 0
+        mail.logout()
+        return jsonify({"ok": True, "message": f"Connexion IMAP OK — {total} emails dans l'inbox"})
+    except Exception as e:
+        return jsonify({"error": f"Connexion impossible: {str(e)[:200]}"}), 400
+
+# --- API: Scraping Google Places -----------------------------------------------
+@app.route("/api/scrape/search", methods=["POST"])
+@require_auth
+@limiter.limit("10 per minute")
+def scrape_search():
+    """Search Google Places API for businesses."""
+    import requests as req
+
+    api_key = Setting.get("google_places_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API Google Places non configuree. Allez dans Parametres."}), 400
+
+    data = request.get_json() or {}
+    query = data.get("query", "").strip()
+    if not query:
+        return jsonify({"error": "Requete vide"}), 400
+
+    location = data.get("location", "")
+    radius = data.get("radius", 50000)
+    next_page_token = data.get("nextPageToken", "")
+
+    full_query = query
+    if location:
+        full_query += " " + location
+
+    try:
+        params = {"query": full_query, "key": api_key, "language": "fr"}
+        if next_page_token:
+            params = {"pagetoken": next_page_token, "key": api_key}
+
+        resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                       params=params, timeout=15)
+        data = resp.json()
+
+        if data.get("status") not in ("OK", "ZERO_RESULTS"):
+            return jsonify({"error": f"Google API: {data.get('status')} — {data.get('error_message', '')}"}), 400
+
+        results = []
+        for place in data.get("results", []):
+            results.append({
+                "placeId": place.get("place_id", ""),
+                "nom": place.get("name", ""),
+                "adresse": place.get("formatted_address", ""),
+                "note": place.get("rating", 0),
+                "avis": place.get("user_ratings_total", 0),
+                "types": place.get("types", []),
+                "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+            })
+
+        return jsonify({
+            "results": results,
+            "total": len(results),
+            "nextPageToken": data.get("next_page_token"),
+        })
+
+    except req.exceptions.Timeout:
+        return jsonify({"error": "Timeout Google API"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
+
+@app.route("/api/scrape/details", methods=["POST"])
+@require_auth
+@limiter.limit("30 per minute")
+def scrape_details():
+    """Get place details (website, phone) from Google Places."""
+    import requests as req
+
+    api_key = Setting.get("google_places_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API non configuree"}), 400
+
+    data = request.get_json() or {}
+    place_ids = data.get("placeIds", [])
+    if not place_ids:
+        return jsonify({"error": "Aucun place_id"}), 400
+
+    results = []
+    for pid in place_ids[:20]:
+        try:
+            resp = req.get("https://maps.googleapis.com/maps/api/place/details/json",
+                           params={"place_id": pid, "key": api_key, "language": "fr",
+                                   "fields": "name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,url,types,address_components"},
+                           timeout=10)
+            d = resp.json().get("result", {})
+
+            ville = ""
+            region = ""
+            for comp in d.get("address_components", []):
+                if "locality" in comp.get("types", []):
+                    ville = comp["long_name"]
+                if "administrative_area_level_1" in comp.get("types", []):
+                    region = comp["long_name"]
+
+            type_label = ""
+            type_map = {"lodging": "hebergement", "restaurant": "restaurant", "cafe": "cafe",
+                        "bar": "bar", "spa": "spa", "campground": "camping",
+                        "travel_agency": "agence de voyage", "tourist_attraction": "attraction",
+                        "store": "commerce", "gym": "salle de sport", "beauty_salon": "salon de beaute"}
+            for t in d.get("types", []):
+                if t in type_map:
+                    type_label = type_map[t]
+                    break
+            if not type_label:
+                type_label = d.get("types", ["autre"])[0] if d.get("types") else "autre"
+
+            results.append({
+                "placeId": pid,
+                "nom": d.get("name", ""),
+                "adresse": d.get("formatted_address", ""),
+                "telephone": d.get("formatted_phone_number", ""),
+                "site": d.get("website", ""),
+                "note": d.get("rating", 0),
+                "avis": d.get("user_ratings_total", 0),
+                "googleMaps": d.get("url", ""),
+                "ville": ville,
+                "region": region,
+                "type": type_label,
+            })
+        except Exception:
+            continue
+
+    return jsonify({"results": results})
+
+@app.route("/api/scrape/extract-emails", methods=["POST"])
+@require_auth
+@limiter.limit("5 per minute")
+def scrape_extract_emails():
+    """Extract email addresses from websites."""
+    import requests as req
+    from bs4 import BeautifulSoup
+
+    data = request.get_json() or {}
+    prospects = data.get("prospects", [])
+    if not prospects:
+        return jsonify({"error": "Aucun prospect"}), 400
+
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+    skip_emails = {"example@email.com", "email@example.com", "your@email.com", "name@domain.com",
+                   "info@w3.org", "wixpress@gmail.com", "support@wix.com"}
+
+    results = []
+    for p in prospects[:30]:
+        site = p.get("site", "")
+        if not site:
+            results.append({**p, "email": "", "emailSource": ""})
+            continue
+
+        found_emails = set()
+        pages_to_check = [site]
+        # Add common contact pages
+        base = site.rstrip("/")
+        for suffix in ["/contact", "/contactez-nous", "/nous-contacter", "/a-propos", "/mentions-legales", "/legal"]:
+            pages_to_check.append(base + suffix)
+
+        for url in pages_to_check:
+            try:
+                resp = req.get(url, timeout=8, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                }, allow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+
+                text = resp.text[:100000]
+                soup = BeautifulSoup(text, "html.parser")
+
+                # mailto: links
+                for a in soup.find_all("a", href=True):
+                    if a["href"].startswith("mailto:"):
+                        em = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
+                        if _is_valid_email(em) and em not in skip_emails:
+                            found_emails.add(em)
+
+                # Regex on text
+                for em in email_pattern.findall(text):
+                    em = em.lower().strip()
+                    if _is_valid_email(em) and em not in skip_emails:
+                        if not any(x in em for x in [".png", ".jpg", ".gif", ".css", ".js", "sentry", "webpack"]):
+                            found_emails.add(em)
+
+                if found_emails:
+                    break
+
+            except Exception:
+                continue
+
+        best_email = ""
+        if found_emails:
+            # Prioritize contact/info emails
+            priority = ["contact@", "info@", "hello@", "accueil@", "reservation@", "booking@"]
+            for prefix in priority:
+                for em in found_emails:
+                    if em.startswith(prefix):
+                        best_email = em
+                        break
+                if best_email:
+                    break
+            if not best_email:
+                best_email = sorted(found_emails)[0]
+
+        results.append({**p, "email": best_email, "emailSource": "website" if best_email else "",
+                        "allEmails": list(found_emails)})
+
+    return jsonify({"results": results})
+
+# --- API: Import from file (CSV/JSON) -----------------------------------------
+@app.route("/api/import/file", methods=["POST"])
+@require_auth
+def import_file():
+    """Import prospects from uploaded CSV or JSON."""
+    import csv
+    import io
+
+    if request.content_type and "multipart/form-data" in request.content_type:
+        f = request.files.get("file")
+        if not f:
+            return jsonify({"error": "Aucun fichier"}), 400
+
+        filename = f.filename.lower()
+        content = f.read().decode("utf-8", errors="ignore")
+
+        if filename.endswith(".json"):
+            try:
+                prospects_data = json.loads(content)
+                if isinstance(prospects_data, dict):
+                    prospects_data = prospects_data.get("prospects", [])
+            except json.JSONDecodeError:
+                return jsonify({"error": "JSON invalide"}), 400
+        elif filename.endswith(".csv"):
+            reader = csv.DictReader(io.StringIO(content))
+            prospects_data = list(reader)
+        else:
+            return jsonify({"error": "Format non supporte (JSON ou CSV)"}), 400
+    else:
+        data = request.get_json() or {}
+        prospects_data = data.get("prospects", [])
+
+    if not prospects_data:
+        return jsonify({"error": "Aucun prospect dans le fichier"}), 400
+
+    stats = {"imported": 0, "skipped": 0, "updated": 0, "errors": 0}
+
+    for pd_item in prospects_data:
+        nom = (pd_item.get("nom") or pd_item.get("name") or pd_item.get("Nom") or "").strip()
+        if not nom:
+            stats["errors"] += 1
+            continue
+
+        email_addr = (pd_item.get("email") or pd_item.get("Email") or "").strip().lower()
+        ville = (pd_item.get("ville") or pd_item.get("Ville") or pd_item.get("city") or "").strip()
+
+        existing = None
+        if email_addr:
+            existing = Prospect.query.filter(db.func.lower(Prospect.email) == email_addr).first()
+        if not existing and nom and ville:
+            existing = Prospect.query.filter(
+                db.func.lower(Prospect.nom) == nom.lower(),
+                db.func.lower(Prospect.ville) == ville.lower()
+            ).first()
+
+        if existing:
+            updated = False
+            for field, attr in [("email", "email"), ("telephone", "telephone"),
+                                ("site", "site_web"), ("adresse", "adresse"),
+                                ("note", "note_google"), ("avis", "nb_avis"),
+                                ("googleMaps", "google_maps"), ("site_web", "site_web"),
+                                ("telephone", "telephone")]:
+                new_val = pd_item.get(field)
+                if new_val and not getattr(existing, attr):
+                    setattr(existing, attr, new_val)
+                    updated = True
+            stats["updated" if updated else "skipped"] += 1
+            continue
+
+        p = Prospect(
+            nom=nom,
+            type=pd_item.get("type") or pd_item.get("Type") or "autre",
+            ville=ville,
+            region=pd_item.get("region") or pd_item.get("Region") or ville,
+            email=email_addr,
+            telephone=pd_item.get("telephone") or pd_item.get("Telephone") or "",
+            site_web=pd_item.get("site") or pd_item.get("site_web") or pd_item.get("Site Web") or "",
+            note_google=float(pd_item.get("note") or pd_item.get("note_google") or pd_item.get("Note Google") or 0),
+            nb_avis=int(pd_item.get("avis") or pd_item.get("nb_avis") or pd_item.get("Avis") or 0),
+            adresse=pd_item.get("adresse") or pd_item.get("Adresse") or "",
+            google_maps=pd_item.get("googleMaps") or pd_item.get("google_maps") or "",
+            status="new",
+            unsubscribe_token=secrets.token_urlsafe(32),
+        )
+        _calculate_score(p)
+        db.session.add(p)
+        stats["imported"] += 1
+
+        if stats["imported"] % 500 == 0:
+            db.session.commit()
+
+    db.session.commit()
+    return jsonify({"ok": True, **stats})
+
+# --- API: Bulk Delete ---------------------------------------------------------
+@app.route("/api/bulk-delete", methods=["POST"])
+@require_auth
+def bulk_delete():
+    data = request.get_json() or {}
+    ids = data.get("ids", [])
+    if not ids:
+        return jsonify({"error": "ids requis"}), 400
+    EmailLog.query.filter(EmailLog.prospect_id.in_(ids)).delete(synchronize_session=False)
+    Prospect.query.filter(Prospect.id.in_(ids)).delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({"ok": True, "deleted": len(ids)})
+
 # --- Health Check -------------------------------------------------------------
 @app.route("/health")
 def health():
@@ -1098,6 +1451,7 @@ def health():
         return jsonify({"status": "unhealthy", "database": str(e)}), 503
 
 @app.route("/debug")
+@require_auth
 def debug():
     """Diagnostic endpoint - shows database state and any errors."""
     info = {}
