@@ -500,7 +500,6 @@ def _check_inbox_internal():
 
 # --- API: Auth ----------------------------------------------------------------
 @app.route("/api/login", methods=["POST"])
-@limiter.limit("15 per minute")
 def login():
     data = request.get_json() or {}
     if data.get("password") == CRM_PASSWORD:
@@ -700,7 +699,6 @@ def check_inbox():
 # --- API: Auto-Send Campaign Engine -------------------------------------------
 @app.route("/api/auto-send", methods=["POST"])
 @require_auth_or_secret
-@limiter.limit("2 per minute")
 def auto_send():
     """The main campaign engine. Sends email sequences automatically."""
     cfg = _get_smtp_config()
@@ -1354,7 +1352,6 @@ def test_imap():
 # --- API: Scraping Google Places -----------------------------------------------
 @app.route("/api/scrape/search", methods=["POST"])
 @require_auth
-@limiter.limit("30 per minute")
 def scrape_search():
     """Search Google Places API for businesses. Supports multi-city search."""
     import requests as req
@@ -1490,7 +1487,6 @@ def _track_api_call(n=1):
 
 @app.route("/api/scrape/deep", methods=["POST"])
 @require_auth
-@limiter.limit("20 per minute")
 def scrape_deep():
     """Deep search: geocode city, create grid, search each sector. Returns hundreds of results."""
     import requests as req
@@ -1565,69 +1561,36 @@ def scrape_deep():
         if center_lat is None:
             return jsonify({"error": f"Ville '{city}' non trouvee. Essayez une grande ville ou verifiez l'orthographe."}), 400
 
-        # Step 2: Load existing prospects for dedup
-        existing_names = set()
-        try:
-            for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
-                existing_names.add(row[0])
-        except Exception:
-            pass
+        # Simple text search — same as /api/scrape/search but with keyword param
+        full_q = keywords[0] + " " + city
+        params = {"query": full_q, "key": api_key, "language": "fr"}
 
-        # Step 3: Text Search for each keyword (same API as standard search, proven to work)
-        seen_place_ids = set()
+        resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                      params=params, timeout=15)
+        _track_api_call()
+        page_data = resp.json()
+
+        if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
+            return jsonify({"error": f"Google API: {page_data.get('status')} — {page_data.get('error_message', '')}"}), 400
+
         all_results = []
-        api_calls = 0
-
-        for kw in keywords:
-            full_q = kw + " " + city
-            params = {"query": full_q, "key": api_key, "language": "fr",
-                      "location": f"{center_lat},{center_lng}", "radius": radius_km * 1000}
-            try:
-                resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
-                              params=params, timeout=15)
-                _track_api_call()
-                api_calls += 1
-                page_data = resp.json()
-
-                if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
-                    continue
-
-                for place in page_data.get("results", []):
-                    pid = place.get("place_id", "")
-                    if pid in seen_place_ids:
-                        continue
-                    seen_place_ids.add(pid)
-
-                    name = place.get("name", "")
-                    addr = place.get("formatted_address", "")
-                    name_norm = _normalize(name)
-                    is_dup = name_norm in existing_names or name.lower() in existing_names
-
-                    all_results.append({
-                        "placeId": pid,
-                        "nom": name,
-                        "adresse": addr,
-                        "note": place.get("rating", 0),
-                        "avis": place.get("user_ratings_total", 0),
-                        "types": place.get("types", []),
-                        "lat": place.get("geometry", {}).get("location", {}).get("lat"),
-                        "lng": place.get("geometry", {}).get("location", {}).get("lng"),
-                        "duplicate": is_dup,
-                    })
-            except Exception:
-                continue
-
-        new_count = sum(1 for r in all_results if not r.get("duplicate"))
-        dup_count = sum(1 for r in all_results if r.get("duplicate"))
-
+        for place in page_data.get("results", []):
+            all_results.append({
+                "placeId": place.get("place_id", ""),
+                "nom": place.get("name", ""),
+                "adresse": place.get("formatted_address", ""),
+                "note": place.get("rating", 0),
+                "avis": place.get("user_ratings_total", 0),
+                "types": place.get("types", []),
+                "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                "duplicate": False,
         return jsonify({
             "results": all_results,
             "total": len(all_results),
-            "new": new_count,
-            "duplicates": dup_count,
-            "apiCalls": api_calls,
-            "gridPoints": len(grid_points),
-            "keywords": len(keywords),
+            "new": len(all_results),
+            "duplicates": 0,
+            "apiCalls": 1,
             "center": {"lat": center_lat, "lng": center_lng},
         })
 
@@ -1636,7 +1599,6 @@ def scrape_deep():
 
 @app.route("/api/scrape/details", methods=["POST"])
 @require_auth
-@limiter.limit("30 per minute")
 def scrape_details():
     """Get place details (website, phone) from Google Places."""
     import requests as req
@@ -1700,7 +1662,6 @@ def scrape_details():
 
 @app.route("/api/scrape/extract-emails", methods=["POST"])
 @require_auth
-@limiter.limit("15 per minute")
 def scrape_extract_emails():
     """Extract email addresses from websites."""
     import requests as req
@@ -2037,7 +1998,6 @@ def _scrape_emails_from_site(site_url):
 
 @app.route("/api/enrich-emails", methods=["POST"])
 @require_auth
-@limiter.limit("20 per minute")
 def enrich_emails():
     """Find emails from prospect websites. Processes N prospects per call."""
     data = request.get_json() or {}
