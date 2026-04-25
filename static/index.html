@@ -919,31 +919,29 @@ function ScrapingView(){
 
     // Data.gouv.fr import
     h("div",{className:"card-dark p-6"},
-      h("h3",{className:"font-semibold text-gray-300 mb-3"},"🇫🇷 Base nationale des hebergements (data.gouv.fr)"),
-      h("p",{className:"text-xs text-gray-500 mb-3"},"Import direct de la base officielle des hebergements touristiques classes en France. Gratuit, exhaustif, mise a jour regulierement."),
+      h("h3",{className:"font-semibold text-gray-300 mb-3"},"🇫🇷 Importer depuis data.gouv.fr / CSV en ligne"),
+      h("div",{className:"text-xs text-gray-500 mb-3 p-3 bg-gray-800/50 rounded-lg space-y-1"},
+        h("div",null,"💡 Comment trouver la base des hebergements :"),
+        h("div",null,"1. Allez sur data.gouv.fr et cherchez \"hebergement touristique\""),
+        h("div",null,"2. Cliquez sur le dataset qui vous interesse"),
+        h("div",null,"3. Cliquez sur le bouton \"Telecharger\" du fichier CSV"),
+        h("div",null,"4. Copiez l'URL et collez-la ci-dessous")),
       h("div",{className:"flex flex-wrap gap-3 items-center"},
-        h("button",{onClick:async()=>{
-          showToast("⏳","Telechargement de la base nationale...","#a855f7");
-          try{const r=await api("/import/datagouv",{method:"POST",body:JSON.stringify({url:"https://www.data.gouv.fr/fr/datasets/r/a079e413-59c0-463b-824c-0c2a13743a90"})});
-            showToast("✅",r.imported+" hebergements importes, "+r.skipped+" doublons","#00ff88");if(r.imported>50)launchConfetti();
-          }catch(e){showToast("💀",e.message,"#ef4444");}
-        },className:"px-4 py-2.5 text-white rounded-lg text-sm font-bold",
-          style:{background:"linear-gradient(135deg,#0055a4,#ef4444)"}},"🏨 Hebergements classes (France entiere)"),
-        h("span",{className:"text-xs text-gray-600"},"ou collez une URL CSV :"),
-        h("input",{id:"datagouv-url",placeholder:"https://www.data.gouv.fr/...",
-          className:"flex-1 px-3 py-2 border border-gray-700 rounded-lg text-xs bg-gray-800 text-gray-200",style:{minWidth:200}}),
-        h("input",{id:"datagouv-dept",placeholder:"Dept (ex: 21)",
-          className:"w-24 px-3 py-2 border border-gray-700 rounded-lg text-xs bg-gray-800 text-gray-200"}),
+        h("input",{id:"datagouv-url",placeholder:"Collez l'URL du CSV ici...",
+          className:"flex-1 px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30",style:{minWidth:250}}),
+        h("input",{id:"datagouv-dept",placeholder:"Dept (ex: 21, optionnel)",
+          className:"w-40 px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30"}),
         h("button",{onClick:async()=>{
           const url=document.getElementById("datagouv-url").value;
           const dept=document.getElementById("datagouv-dept").value;
-          if(!url){showToast("💀","Collez une URL","#ef4444");return;}
-          showToast("⏳","Telechargement...","#a855f7");
+          if(!url){showToast("💀","Collez une URL CSV","#ef4444");return;}
+          showToast("⏳","Telechargement et import en cours...","#a855f7");
           try{const r=await api("/import/datagouv",{method:"POST",body:JSON.stringify({url,departement:dept})});
             showToast("✅",r.imported+" importes, "+r.skipped+" doublons (sur "+r.total+" lignes)","#00ff88");
             if(r.imported>50)launchConfetti();
           }catch(e){showToast("💀",e.message,"#ef4444");}
-        },className:"px-4 py-2 border border-gray-700 rounded-lg text-xs text-gray-400 hover:border-neon"},"Importer"))),
+        },className:"px-5 py-2.5 text-white rounded-lg text-sm font-bold",
+          style:{background:"linear-gradient(135deg,#0055a4,#ef4444)"}},"🇫🇷 Importer"))),
 
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},
