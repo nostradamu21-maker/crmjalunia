@@ -778,6 +778,8 @@ function ScrapingView(){
   const[location,setLoc]=useState("");
   const[results,setResults]=useState([]);
   const[searching,setSearching]=useState(false);
+  const[deepMode,setDeepMode]=useState(true);
+  const[radius,setRadius]=useState(15);
   const[selected,setSelected]=useState(new Set());
   const[step,setStep]=useState("search");
   const[detailed,setDetailed]=useState([]);
@@ -788,12 +790,20 @@ function ScrapingView(){
 
   const search=async()=>{
     setSearching(true);setImportResult(null);
-    try{const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
+    try{
+      let r;
+      if(deepMode&&location){
+        showToast("🔍","Recherche approfondie en cours (9 secteurs)...","#a855f7");
+        r=await api("/scrape/deep",{method:"POST",body:JSON.stringify({query,city:location,radius})});
+        showToast("🔍",r.total+" trouves ("+r.new+" nouveaux, "+r.apiCalls+" appels API)","#00f0ff");
+      }else{
+        r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
+        showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
+      }
       setResults(r.results);
       const newSelected=new Set();
       r.results.forEach((item,i)=>{if(!item.duplicate)newSelected.add(i);});
       setSelected(newSelected);setStep("results");
-      showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);
   };
@@ -836,19 +846,29 @@ function ScrapingView(){
     // Search form
     h("div",{className:"card-dark p-6"},
       h("h3",{className:"font-semibold text-gray-300 mb-4"},"Recherche Google Places"),
-      h("div",{className:"grid grid-cols-1 md:grid-cols-3 gap-4 mb-4"},
-        h("div",{className:"md:col-span-1"},h("label",{className:"block text-xs text-gray-500 mb-1"},"Recherche (ex: hotel, restaurant, camping...)"),
-          h("input",{value:query,onChange:e=>setQuery(e.target.value),placeholder:"hotel spa",
+      h("div",{className:"grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"},
+        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Recherche"),
+          h("input",{value:query,onChange:e=>setQuery(e.target.value),placeholder:"gite, chambre d'hotes...",
             className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30"})),
-        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Villes (separees par des virgules)"),
-          h("input",{value:location,onChange:e=>setLoc(e.target.value),placeholder:"Lyon, Bordeaux, Nice, Dijon...",
+        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},deepMode?"Ville":"Villes (virgules)"),
+          h("input",{value:location,onChange:e=>setLoc(e.target.value),placeholder:deepMode?"Dijon":"Lyon, Bordeaux, Nice...",
             className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30"})),
+        deepMode?h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Rayon (km)"),
+          h("select",{value:radius,onChange:e=>setRadius(Number(e.target.value)),
+            className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200"},
+            [5,10,15,25,50].map(v=>h("option",{key:v,value:v},v+" km")))):null,
         h("div",{className:"flex items-end"},
-          h("button",{onClick:()=>search(),disabled:searching||!query,
+          h("button",{onClick:()=>search(),disabled:searching||!query||(deepMode&&!location),
             className:"w-full px-6 py-2.5 text-white rounded-lg text-sm font-bold disabled:opacity-40 font-gaming tracking-wider",
-            style:{background:"linear-gradient(135deg,#00f0ff,#a855f7)"}},
-            searching?"Recherche...":"⚡ SCRAPER"))),
-      h("p",{className:"text-xs text-gray-600"},"💡 Google retourne max 20 resultats par ville. Pour plus de resultats, listez plusieurs villes separees par des virgules.")),
+            style:{background:deepMode?"linear-gradient(135deg,#ff00e5,#a855f7)":"linear-gradient(135deg,#00f0ff,#a855f7)"}},
+            searching?(deepMode?"Scan en cours...":"Recherche..."):(deepMode?"🔥 SCAN COMPLET":"⚡ SCRAPER")))),
+      h("div",{className:"flex items-center justify-between"},
+        h("label",{className:"flex items-center gap-2 cursor-pointer"},
+          h("input",{type:"checkbox",checked:deepMode,onChange:e=>setDeepMode(e.target.checked),className:"w-4 h-4 accent-purple-400"}),
+          h("span",{className:"text-xs text-gray-400"},"Recherche approfondie"),
+          h("span",{className:"text-xs px-2 py-0.5 rounded-full "+(deepMode?"bg-purple-500/20 text-purple-400":"bg-gray-800 text-gray-600")},
+            deepMode?"9 secteurs — jusqu'a 180 resultats":"Max 20 resultats")),
+        h("span",{className:"text-xs text-gray-600"},deepMode?"Decoupe la zone en 9 secteurs et cherche dans chacun":"Multi-villes: separez par des virgules"))),
 
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},

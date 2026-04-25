@@ -1439,6 +1439,107 @@ def scrape_search():
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
 
+@app.route("/api/scrape/deep", methods=["POST"])
+@require_auth
+@limiter.limit("3 per minute")
+def scrape_deep():
+    """Deep search: geocode city, create grid, search each sector. Returns hundreds of results."""
+    import requests as req
+
+    api_key = Setting.get("google_places_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API Google Places non configuree"}), 400
+
+    data = request.get_json() or {}
+    query = data.get("query", "").strip()
+    city = data.get("city", "").strip()
+    if not query or not city:
+        return jsonify({"error": "Recherche et ville requis"}), 400
+
+    radius_km = min(_safe_int(data.get("radius", 15), 15), 50)
+
+    try:
+        # Step 1: Geocode the city
+        geo_resp = req.get("https://maps.googleapis.com/maps/api/geocode/json",
+                          params={"address": city + ", France", "key": api_key}, timeout=10)
+        geo_data = geo_resp.json()
+        if not geo_data.get("results"):
+            return jsonify({"error": f"Ville '{city}' non trouvee"}), 400
+
+        center = geo_data["results"][0]["geometry"]["location"]
+        center_lat, center_lng = center["lat"], center["lng"]
+
+        # Step 2: Create a grid of search points (3x3 = 9 sectors)
+        step = radius_km / 111.0  # ~1 degree = 111km
+        grid_points = []
+        for dlat in [-step, 0, step]:
+            for dlng in [-step, 0, step]:
+                grid_points.append((center_lat + dlat, center_lng + dlng))
+
+        # Step 3: Load existing prospects for dedup
+        existing_names = set()
+        for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
+            existing_names.add(row[0])
+
+        # Step 4: Search each grid point
+        seen_place_ids = set()
+        all_results = []
+        api_calls = 0
+
+        for lat, lng in grid_points:
+            params = {
+                "location": f"{lat},{lng}",
+                "radius": radius_km * 1000 // 3,
+                "keyword": query,
+                "key": api_key,
+                "language": "fr",
+            }
+            resp = req.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+                          params=params, timeout=15)
+            api_calls += 1
+            page_data = resp.json()
+
+            if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
+                continue
+
+            for place in page_data.get("results", []):
+                pid = place.get("place_id", "")
+                if pid in seen_place_ids:
+                    continue
+                seen_place_ids.add(pid)
+
+                name = place.get("name", "")
+                addr = place.get("vicinity", "") or place.get("formatted_address", "")
+                is_dup = name.lower() in existing_names
+
+                all_results.append({
+                    "placeId": pid,
+                    "nom": name,
+                    "adresse": addr,
+                    "note": place.get("rating", 0),
+                    "avis": place.get("user_ratings_total", 0),
+                    "types": place.get("types", []),
+                    "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                    "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                    "duplicate": is_dup,
+                })
+
+        new_count = sum(1 for r in all_results if not r.get("duplicate"))
+        dup_count = sum(1 for r in all_results if r.get("duplicate"))
+
+        return jsonify({
+            "results": all_results,
+            "total": len(all_results),
+            "new": new_count,
+            "duplicates": dup_count,
+            "apiCalls": api_calls,
+            "gridPoints": len(grid_points),
+            "center": {"lat": center_lat, "lng": center_lng},
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
+
 @app.route("/api/scrape/details", methods=["POST"])
 @require_auth
 @limiter.limit("30 per minute")
