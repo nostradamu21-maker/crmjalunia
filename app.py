@@ -1370,11 +1370,18 @@ def scrape_search():
         params = {"query": full_query, "key": api_key, "language": "fr"}
         if next_page_token:
             params = {"pagetoken": next_page_token, "key": api_key}
-            time.sleep(2)  # Google requires ~2s before next_page_token is valid
+            time.sleep(3)
 
         resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
                        params=params, timeout=15)
         data = resp.json()
+
+        # Retry once if INVALID_REQUEST with page token (token not ready yet)
+        if next_page_token and data.get("status") == "INVALID_REQUEST":
+            time.sleep(3)
+            resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                           params=params, timeout=15)
+            data = resp.json()
 
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             return jsonify({"error": f"Google API: {data.get('status')} — {data.get('error_message', '')}"}), 400

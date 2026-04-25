@@ -632,7 +632,8 @@ function CampaignView(){
   const[applyResult,setApplyResult]=useState(null);
   const[preview,setPreview]=useState(null);
 
-  const loadStats=()=>{api("/campaign/stats").then(setStats).catch(()=>{}).finally(()=>setLoading(false));};
+  const[loadErr,setLoadErr]=useState("");
+  const loadStats=()=>{api("/campaign/stats").then(setStats).catch(e=>setLoadErr(e.message)).finally(()=>setLoading(false));};
   useEffect(()=>{loadStats();
     api("/settings").then(s=>{
       setTpl({email1Sujet:s.tpl_email1_sujet||"",email1Corps:s.tpl_email1_corps||"",
@@ -666,7 +667,10 @@ function CampaignView(){
   };
 
   if(loading)return h("div",{className:"text-center py-20 text-gray-400"},"Chargement...");
-  if(!stats)return h("div",{className:"text-center py-20 text-red-400"},"Erreur de chargement");
+  if(!stats)return h("div",{className:"text-center py-20"},
+    h("div",{className:"text-red-400 mb-2"},"Erreur de chargement"),
+    loadErr?h("div",{className:"text-xs text-gray-500 mb-3"},loadErr):null,
+    h("button",{onClick:()=>{setLoading(true);setLoadErr("");loadStats();},className:"px-4 py-2 border border-gray-700 rounded-lg text-sm text-gray-400 hover:border-neon"},"Recharger"));
 
   const pct=stats.dailyLimit>0?Math.round(stats.sentToday/stats.dailyLimit*100):0;
   const totalReady=stats.readyEmail1+stats.readyEmail2+stats.readyEmail3;
