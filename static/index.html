@@ -807,13 +807,19 @@ function ScrapingView(){
     for(let page=0;page<3;page++){
       const body={query:q,location:loc};
       if(nextToken)body.nextPageToken=nextToken;
-      if(page>0)await wait(3000);
+      if(page>0)await wait(4000);
       try{
-        const r=await api("/scrape/search",{method:"POST",body:JSON.stringify(body)});
+        let r;
+        try{r=await api("/scrape/search",{method:"POST",body:JSON.stringify(body)});}
+        catch(e){
+          if(page>0){await wait(3000);try{r=await api("/scrape/search",{method:"POST",body:JSON.stringify(body)});}catch(e2){break;}}
+          else throw e;
+        }
         for(const p of(r.results||[]))all.push(p);
+        showToast("📄","Page "+(page+1)+": "+r.results.length+" resultats (total: "+all.length+")","#00f0ff");
         nextToken=r.nextPageToken;
         if(!nextToken)break;
-      }catch(e){break;}
+      }catch(e){showToast("⚠️","Page "+(page+1)+": "+e.message,"#ffe600");break;}
     }
     return all;
   };
