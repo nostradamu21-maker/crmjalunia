@@ -785,10 +785,11 @@ function ScrapingView(){
 
   const search=async(pageToken)=>{
     setSearching(true);setImportResult(null);
+    if(pageToken){showToast("⏳","Chargement page suivante...","#00f0ff");await new Promise(r=>setTimeout(r,2500));}
     try{const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location,nextPageToken:pageToken||""})});
       if(pageToken)setResults(prev=>[...prev,...r.results]);else setResults(r.results);
       setNextPage(r.nextPageToken||null);setStep("results");
-      showToast("🔍",r.total+" resultats trouves","#00f0ff");
+      showToast("🔍",r.total+" nouveaux"+(r.skipped?" ("+r.skipped+" deja en base)":""),"#00f0ff");
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);
   };

@@ -552,36 +552,44 @@ def get_prospects():
 @app.route("/api/prospects/stats")
 @require_auth
 def get_stats():
-    total = Prospect.query.count()
-    with_email = Prospect.query.filter(Prospect.email != "", Prospect.email.isnot(None)).count()
+    try:
+        total = Prospect.query.count()
+        with_email = Prospect.query.filter(Prospect.email != "", Prospect.email.isnot(None)).count()
 
-    status_counts = {}
-    for row in db.session.query(Prospect.status, db.func.count(Prospect.id)).group_by(Prospect.status).all():
-        status_counts[row[0]] = row[1]
+        status_counts = {}
+        for row in db.session.query(Prospect.status, db.func.count(Prospect.id)).group_by(Prospect.status).all():
+            status_counts[row[0]] = row[1]
 
-    type_counts = {}
-    for row in db.session.query(Prospect.type, db.func.count(Prospect.id)).group_by(Prospect.type).order_by(db.func.count(Prospect.id).desc()).all():
-        type_counts[row[0]] = row[1]
+        type_counts = {}
+        for row in db.session.query(Prospect.type, db.func.count(Prospect.id)).group_by(Prospect.type).order_by(db.func.count(Prospect.id).desc()).limit(15).all():
+            type_counts[row[0]] = row[1]
 
-    ville_counts = {}
-    for row in db.session.query(Prospect.ville, db.func.count(Prospect.id)).group_by(Prospect.ville).order_by(db.func.count(Prospect.id).desc()).limit(20).all():
-        ville_counts[row[0]] = row[1]
+        ville_counts = {}
+        for row in db.session.query(Prospect.ville, db.func.count(Prospect.id)).group_by(Prospect.ville).order_by(db.func.count(Prospect.id).desc()).limit(15).all():
+            ville_counts[row[0]] = row[1]
 
-    email_by_type = {}
-    for t, c in type_counts.items():
-        with_e = Prospect.query.filter(Prospect.type == t, Prospect.email != "", Prospect.email.isnot(None)).count()
-        email_by_type[t] = {"total": c, "withEmail": with_e, "pct": round(with_e / c * 100) if c > 0 else 0}
+        # Single query for email coverage by type (replaces N+1)
+        email_by_type = {}
+        for row in db.session.query(
+            Prospect.type,
+            db.func.count(Prospect.id),
+            db.func.count(db.case((db.and_(Prospect.email != "", Prospect.email.isnot(None)), Prospect.id)))
+        ).group_by(Prospect.type).order_by(db.func.count(Prospect.id).desc()).limit(10).all():
+            t, c, e = row
+            email_by_type[t] = {"total": c, "withEmail": e, "pct": round(e / c * 100) if c > 0 else 0}
 
-    contacted = total - status_counts.get("new", 0)
-    replied = sum(status_counts.get(s, 0) for s in ["replied", "meeting", "converted"])
+        contacted = total - status_counts.get("new", 0)
+        replied = sum(status_counts.get(s, 0) for s in ["replied", "meeting", "converted"])
 
-    return jsonify({
-        "total": total, "withEmail": with_email, "contacted": contacted,
-        "replied": replied, "meetings": status_counts.get("meeting", 0),
-        "converted": status_counts.get("converted", 0),
-        "statusCounts": status_counts, "typeCounts": type_counts,
-        "villeCounts": ville_counts, "emailByType": email_by_type,
-    })
+        return jsonify({
+            "total": total, "withEmail": with_email, "contacted": contacted,
+            "replied": replied, "meetings": status_counts.get("meeting", 0),
+            "converted": status_counts.get("converted", 0),
+            "statusCounts": status_counts, "typeCounts": type_counts,
+            "villeCounts": ville_counts, "emailByType": email_by_type,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
 
 @app.route("/api/prospects/<int:pid>")
 @require_auth
@@ -858,52 +866,52 @@ def inbox_results_to_run(inbox):
 @app.route("/api/campaign/stats")
 @require_auth
 def campaign_stats():
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    sent_today = EmailLog.query.filter(
-        EmailLog.sent_at >= today_start, EmailLog.status == "sent"
-    ).count()
-    daily_limit = int(Setting.get("daily_limit", "30"))
+    try:
+        today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        sent_today = EmailLog.query.filter(
+            EmailLog.sent_at >= today_start, EmailLog.status == "sent"
+        ).count()
+        daily_limit = int(Setting.get("daily_limit", "30"))
 
-    # Ready to send counts
-    ready_email1 = Prospect.query.filter(
-        Prospect.status == "new", Prospect.email != "", Prospect.email.isnot(None),
-        Prospect.email1_sujet != "", Prospect.email1_sujet.isnot(None),
-        Prospect.emails_sent == 0,
-    ).count()
+        ready_email1 = Prospect.query.filter(
+            Prospect.status == "new", Prospect.email != "", Prospect.email.isnot(None),
+            Prospect.email1_sujet != "", Prospect.email1_sujet.isnot(None),
+            Prospect.emails_sent == 0,
+        ).count()
 
-    delay2 = int(Setting.get("delay_email2", "3"))
-    delay3 = int(Setting.get("delay_email3", "5"))
-    now = datetime.now(timezone.utc)
+        delay2 = int(Setting.get("delay_email2", "3"))
+        delay3 = int(Setting.get("delay_email3", "5"))
+        now = datetime.now(timezone.utc)
 
-    ready_email2 = Prospect.query.filter(
-        Prospect.emails_sent == 1,
-        Prospect.last_email_date <= now - timedelta(days=delay2),
-        Prospect.status.notin_(SKIP_STATUSES),
-        Prospect.email2_sujet != "", Prospect.email2_sujet.isnot(None),
-    ).count()
+        ready_email2 = Prospect.query.filter(
+            Prospect.emails_sent == 1,
+            Prospect.last_email_date <= now - timedelta(days=delay2),
+            Prospect.status.notin_(SKIP_STATUSES),
+            Prospect.email2_sujet != "", Prospect.email2_sujet.isnot(None),
+        ).count()
 
-    ready_email3 = Prospect.query.filter(
-        Prospect.emails_sent == 2,
-        Prospect.last_email_date <= now - timedelta(days=delay3),
-        Prospect.status.notin_(SKIP_STATUSES),
-        Prospect.email3_sujet != "", Prospect.email3_sujet.isnot(None),
-    ).count()
+        ready_email3 = Prospect.query.filter(
+            Prospect.emails_sent == 2,
+            Prospect.last_email_date <= now - timedelta(days=delay3),
+            Prospect.status.notin_(SKIP_STATUSES),
+            Prospect.email3_sujet != "", Prospect.email3_sujet.isnot(None),
+        ).count()
 
-    # Sequence progress
-    at_stage0 = Prospect.query.filter(Prospect.emails_sent == 0, Prospect.email != "", Prospect.email.isnot(None)).count()
-    at_stage1 = Prospect.query.filter(Prospect.emails_sent == 1).count()
-    at_stage2 = Prospect.query.filter(Prospect.emails_sent == 2).count()
-    at_stage3 = Prospect.query.filter(Prospect.emails_sent >= 3).count()
+        at_stage0 = Prospect.query.filter(Prospect.emails_sent == 0, Prospect.email != "", Prospect.email.isnot(None)).count()
+        at_stage1 = Prospect.query.filter(Prospect.emails_sent == 1).count()
+        at_stage2 = Prospect.query.filter(Prospect.emails_sent == 2).count()
+        at_stage3 = Prospect.query.filter(Prospect.emails_sent >= 3).count()
 
-    # Last run
-    last_run = CampaignRun.query.order_by(CampaignRun.started_at.desc()).first()
+        last_run = CampaignRun.query.order_by(CampaignRun.started_at.desc()).first()
 
-    return jsonify({
-        "sentToday": sent_today, "dailyLimit": daily_limit,
-        "readyEmail1": ready_email1, "readyEmail2": ready_email2, "readyEmail3": ready_email3,
-        "atStage0": at_stage0, "atStage1": at_stage1, "atStage2": at_stage2, "atStage3": at_stage3,
-        "lastRun": last_run.to_dict() if last_run else None,
-    })
+        return jsonify({
+            "sentToday": sent_today, "dailyLimit": daily_limit,
+            "readyEmail1": ready_email1, "readyEmail2": ready_email2, "readyEmail3": ready_email3,
+            "atStage0": at_stage0, "atStage1": at_stage1, "atStage2": at_stage2, "atStage3": at_stage3,
+            "lastRun": last_run.to_dict() if last_run else None,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
 
 # --- API: Campaign History ----------------------------------------------------
 @app.route("/api/campaign/history")
