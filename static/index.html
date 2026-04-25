@@ -786,8 +786,7 @@ function ScrapingView(){
   const[location,setLoc]=useState("");
   const[results,setResults]=useState([]);
   const[searching,setSearching]=useState(false);
-  const[deepMode,setDeepMode]=useState(true);
-  const[radius,setRadius]=useState(15);
+  const[deepMode,setDeepMode]=useState(false);
   const[usage,setUsage]=useState(null);
   useEffect(()=>{api("/api-usage").then(setUsage).catch(()=>{});},[]);
   const refreshUsage=()=>api("/api-usage").then(setUsage).catch(()=>{});
@@ -799,38 +798,29 @@ function ScrapingView(){
   const[importResult,setImportResult]=useState(null);
   const[detailing,setDetailing]=useState(false);
 
-  const ALL_CATEGORIES=["gîte","chambre d'hôtes","hébergement","location vacances","meublé tourisme","appart hotel","maison hôtes","lodge"];
-  const[multiCat,setMultiCat]=useState(false);
+  const ALL_CATEGORIES=["gite","chambre d'hotes","hebergement","location vacances","meuble tourisme","appart hotel"];
 
   const search=async()=>{
     setSearching(true);setImportResult(null);setResults([]);
     try{
-      if(deepMode&&location){
-        const cats=multiCat?ALL_CATEGORIES:[query];
-        const allRes=[];
-        const seen=new Set();
-        let calls=0;
-        for(let k=0;k<cats.length;k++){
-          showToast("🔍",(cats.length>1?"Categorie "+(k+1)+"/"+cats.length+": ":"")+cats[k]+"...","#a855f7");
-          try{
-            const r=await api("/scrape/deep",{method:"POST",body:JSON.stringify({query:cats[k],city:location,radius,multi:false,keyword:cats[k]})});
-            calls+=r.apiCalls||0;
-            for(const p of r.results){if(!seen.has(p.placeId)){seen.add(p.placeId);allRes.push(p);}}
-            setResults([...allRes]);
-          }catch(e){showToast("⚠️",cats[k]+": "+e.message,"#ffe600");}
-        }
-        const newCount=allRes.filter(r=>!r.duplicate).length;
-        const newSel=new Set();allRes.forEach((r,i)=>{if(!r.duplicate)newSel.add(i);});setSelected(newSel);
-        setStep("results");
-        showToast("✅",newCount+" nouveaux / "+allRes.length+" trouves ("+calls+" appels API)","#00ff88");
-        if(newCount>20)launchConfetti();
-      }else{
-        const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
-        setResults(r.results);
-        const newSel=new Set();r.results.forEach((item,i)=>{if(!item.duplicate)newSel.add(i);});
-        setSelected(newSel);setStep("results");
-        showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
+      const cats=deepMode?ALL_CATEGORIES:[query];
+      const allRes=[];
+      const seen=new Set();
+      for(let k=0;k<cats.length;k++){
+        const q=deepMode?cats[k]:query;
+        const loc=location;
+        if(cats.length>1)showToast("🔍","Categorie "+(k+1)+"/"+cats.length+": "+cats[k],"#a855f7");
+        try{
+          const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query:q,location:loc})});
+          for(const p of(r.results||[])){if(!seen.has(p.placeId)){seen.add(p.placeId);allRes.push(p);}}
+          setResults([...allRes]);
+        }catch(e){showToast("⚠️",cats[k]+": "+e.message,"#ffe600");}
       }
+      const newCount=allRes.filter(r=>!r.duplicate).length;
+      const newSel=new Set();allRes.forEach((r,i)=>{if(!r.duplicate)newSel.add(i);});setSelected(newSel);
+      setStep("results");
+      showToast("✅",newCount+" nouveaux / "+allRes.length+" trouves","#00ff88");
+      if(newCount>20)launchConfetti();
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);refreshUsage();
   };
@@ -884,32 +874,24 @@ function ScrapingView(){
     // Search form
     h("div",{className:"card-dark p-6"},
       h("h3",{className:"font-semibold text-gray-300 mb-4"},"Recherche Google Places"),
-      h("div",{className:"grid grid-cols-1 md:grid-cols-4 gap-4 mb-4"},
-        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Recherche"),
-          h("input",{value:query,onChange:e=>setQuery(e.target.value),placeholder:"gite, chambre d'hotes...",
+      h("div",{className:"grid grid-cols-1 md:grid-cols-3 gap-4 mb-4"},
+        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},deepMode?"Mot-cle (ignore si multi)":"Recherche"),
+          h("input",{value:query,onChange:e=>setQuery(e.target.value),placeholder:"hebergement, gite...",
             className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30"})),
-        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},deepMode?"Ville":"Villes (virgules)"),
-          h("input",{value:location,onChange:e=>setLoc(e.target.value),placeholder:deepMode?"Dijon":"Lyon, Bordeaux, Nice...",
+        h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Villes (virgules pour plusieurs)"),
+          h("input",{value:location,onChange:e=>setLoc(e.target.value),placeholder:"Dijon, Lyon, Bordeaux...",
             className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30"})),
-        deepMode?h("div",null,h("label",{className:"block text-xs text-gray-500 mb-1"},"Rayon (km)"),
-          h("select",{value:radius,onChange:e=>setRadius(Number(e.target.value)),
-            className:"w-full px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200"},
-            [5,10,15,25,50].map(v=>h("option",{key:v,value:v},v+" km")))):null,
         h("div",{className:"flex items-end"},
-          h("button",{onClick:()=>search(),disabled:searching||!query||(deepMode&&!location),
+          h("button",{onClick:()=>search(),disabled:searching||(!query&&!deepMode),
             className:"w-full px-6 py-2.5 text-white rounded-lg text-sm font-bold disabled:opacity-40 font-gaming tracking-wider",
-            style:{background:deepMode?"linear-gradient(135deg,#ff00e5,#a855f7)":"linear-gradient(135deg,#00f0ff,#a855f7)"}},
-            searching?(deepMode?"Scan en cours...":"Recherche..."):(deepMode?"🔥 SCAN COMPLET":"⚡ SCRAPER")))),
-      h("div",{className:"flex items-center gap-6 flex-wrap"},
+            style:{background:"linear-gradient(135deg,#00f0ff,#a855f7)"}},
+            searching?"Recherche...":"⚡ SCRAPER"))),
+      h("div",{className:"flex items-center gap-4"},
         h("label",{className:"flex items-center gap-2 cursor-pointer"},
           h("input",{type:"checkbox",checked:deepMode,onChange:e=>setDeepMode(e.target.checked),className:"w-4 h-4 accent-purple-400"}),
-          h("span",{className:"text-xs text-gray-400"},"Scan par zone")),
-        deepMode?h("label",{className:"flex items-center gap-2 cursor-pointer"},
-          h("input",{type:"checkbox",checked:multiCat,onChange:e=>setMultiCat(e.target.checked),className:"w-4 h-4 accent-purple-400"}),
-          h("span",{className:"text-xs text-gray-400"},"Multi-categories"),
-          h("span",{className:"text-xs px-2 py-0.5 rounded-full "+(multiCat?"bg-purple-500/20 text-purple-400":"bg-gray-800 text-gray-600")},
-            multiCat?"8 categories auto":"Votre mot-cle")):null,
-        h("span",{className:"text-xs text-gray-600"},deepMode?(multiCat?"Cherche gite, chambre d'hotes, hebergement, etc.":"Cherche votre mot-cle dans 5 secteurs"):"Multi-villes: separez par des virgules"))),
+          h("span",{className:"text-xs text-gray-400"},"Multi-categories (gite, chambre d'hotes, hebergement, location vacances...)")),
+        h("span",{className:"text-xs px-2 py-0.5 rounded-full "+(deepMode?"bg-purple-500/20 text-purple-400":"bg-gray-800 text-gray-600")},
+          deepMode?"6 categories auto":"1 mot-cle"))),
 
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},
