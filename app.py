@@ -1565,17 +1565,7 @@ def scrape_deep():
         if center_lat is None:
             return jsonify({"error": f"Ville '{city}' non trouvee. Essayez une grande ville ou verifiez l'orthographe."}), 400
 
-        # Step 2: Create a grid of search points (5 points: center + NSEW)
-        step = radius_km / 111.0
-        grid_points = [
-            (center_lat, center_lng),
-            (center_lat + step, center_lng),
-            (center_lat - step, center_lng),
-            (center_lat, center_lng + step),
-            (center_lat, center_lng - step),
-        ]
-
-        # Step 3: Load existing prospects for dedup
+        # Step 2: Load existing prospects for dedup
         existing_names = set()
         try:
             for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
@@ -1583,23 +1573,18 @@ def scrape_deep():
         except Exception:
             pass
 
-        # Step 4: Search each grid point
+        # Step 3: Text Search for each keyword (same API as standard search, proven to work)
         seen_place_ids = set()
         all_results = []
         api_calls = 0
 
         for kw in keywords:
-          for lat, lng in grid_points:
+            full_q = kw + " " + city
+            params = {"query": full_q, "key": api_key, "language": "fr",
+                      "location": f"{center_lat},{center_lng}", "radius": radius_km * 1000}
             try:
-                params = {
-                    "location": f"{lat},{lng}",
-                    "radius": radius_km * 1000 // 3,
-                    "keyword": kw,
-                    "key": api_key,
-                    "language": "fr",
-                }
-                resp = req.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
-                              params=params, timeout=10)
+                resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                              params=params, timeout=15)
                 _track_api_call()
                 api_calls += 1
                 page_data = resp.json()
@@ -1614,8 +1599,9 @@ def scrape_deep():
                     seen_place_ids.add(pid)
 
                     name = place.get("name", "")
-                    addr = place.get("vicinity", "") or place.get("formatted_address", "")
-                    is_dup = _normalize(name) in existing_names or name.lower() in existing_names
+                    addr = place.get("formatted_address", "")
+                    name_norm = _normalize(name)
+                    is_dup = name_norm in existing_names or name.lower() in existing_names
 
                     all_results.append({
                         "placeId": pid,
