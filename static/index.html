@@ -786,7 +786,7 @@ function ScrapingView(){
   const[location,setLoc]=useState("");
   const[results,setResults]=useState([]);
   const[searching,setSearching]=useState(false);
-  const[deepMode,setDeepMode]=useState(false);
+  const[deepMode,setDeepMode]=useState(true);
   const[usage,setUsage]=useState(null);
   useEffect(()=>{api("/api-usage").then(setUsage).catch(()=>{});},[]);
   const refreshUsage=()=>api("/api-usage").then(setUsage).catch(()=>{});
@@ -798,7 +798,7 @@ function ScrapingView(){
   const[importResult,setImportResult]=useState(null);
   const[detailing,setDetailing]=useState(false);
 
-  const ALL_CATEGORIES=["gite","chambre d'hotes","hebergement","location vacances","meuble tourisme","appart hotel"];
+  const ALL_CATEGORIES=["gite","chambre d'hotes","hebergement","location vacances","meuble tourisme","appart hotel","bed and breakfast","lodge","auberge","residence tourisme","hotel charme","pension"];
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
 
   const fetchAllPages=async(q,loc)=>{
