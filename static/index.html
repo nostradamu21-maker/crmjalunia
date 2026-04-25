@@ -362,6 +362,7 @@ function ProspectTable({onSelect}){
   const[fType,setFType]=useState("");
   const[fVille,setFVille]=useState("");
   const[fEmail,setFEmail]=useState("");
+  const[fChain,setFChain]=useState("");
   const[filters,setFilters]=useState({types:[],villes:[]});
   const[loading,setLoading]=useState(true);
   const searchTimeout=useRef(null);
@@ -451,9 +452,10 @@ function ProspectTable({onSelect}){
     if(fType)params.set("type",fType);
     if(fVille)params.set("ville",fVille);
     if(fEmail)params.set("has_email",fEmail);
+    if(fChain)params.set("chain",fChain);
     if(sortScore)params.set("sort","score");
     api("/prospects?"+params).then(setData).catch(()=>{}).finally(()=>setLoading(false));
-  },[page,search,fStatus,fType,fVille,fEmail,sortScore]);
+  },[page,search,fStatus,fType,fVille,fEmail,fChain,sortScore]);
 
   useEffect(()=>{load();},[load]);
   useEffect(()=>{api("/filters").then(setFilters).catch(()=>{});},[]);
@@ -474,6 +476,8 @@ function ProspectTable({onSelect}){
         h("option",{value:""},"Toutes villes"),filters.villes.map(v=>h("option",{key:v,value:v},v))),
       h("select",{value:fEmail,onChange:e=>{setFEmail(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
         h("option",{value:""},"Email: tous"),h("option",{value:"with"},"Avec email"),h("option",{value:"without"},"Sans email")),
+      h("select",{value:fChain,onChange:e=>{setFChain(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
+        h("option",{value:""},"Tous"),h("option",{value:"independent"},"🏠 Independants"),h("option",{value:"chain"},"🏢 Chaines")),
       h("button",{onClick:()=>{setSortScore(!sortScore);setPage(1);},
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(sortScore?"border-neon text-neon":"border-gray-700 text-gray-400 hover:border-gray-500")},
         sortScore?"🔥 Score ↓":"🔥 Score"),

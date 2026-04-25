@@ -94,7 +94,36 @@ BASE_URL = os.environ.get("BASE_URL", "https://crmjalunia.onrender.com")
 CRM_PASSWORD = os.environ.get("CRM_PASSWORD", "jalunia2026")
 API_SECRET = os.environ.get("API_SECRET", "")
 
-SKIP_STATUSES = ("replied", "meeting", "converted", "not_interested", "unsubscribed", "bounced")
+HOTEL_CHAINS = [
+    "ibis", "mercure", "novotel", "sofitel", "pullman", "mgallery", "adagio", "mama shelter",
+    "greet", "tribe hotel", "jo&joe", "formule 1", "f1 hotel", "hotelf1",
+    "kyriad", "campanile", "premiere classe", "golden tulip", "tulip inn",
+    "b&b hotel", "b&b hôtel", "b and b",
+    "best western", "sure hotel",
+    "holiday inn", "crowne plaza", "intercontinental", "ihg",
+    "hilton", "hampton inn", "doubletree", "conrad", "curio",
+    "marriott", "courtyard by", "sheraton", "le meridien", "westin", "w hotel", "residence inn", "moxy",
+    "accor", "all seasons",
+    "radisson", "park inn",
+    "hyatt", "ramada", "days inn", "super 8", "wyndham",
+    "brit hotel", "brithotel",
+    "fasthotel", "fast hotel",
+    "appart.city", "appartcity", "appart city",
+    "citadines", "residhome", "adagio access",
+    "all suites", "cerise hotels",
+    "premiere classe", "comfort hotel", "quality hotel", "clarion",
+    "logis hotel", "logis de france",
+    "inter-hotel", "interhotel",
+    "the originals", "relais du silence",
+]
+
+def _is_chain(name):
+    """Check if a prospect name matches a known hotel chain."""
+    if not name:
+        return False
+    n = name.lower().strip()
+    return any(chain in n for chain in HOTEL_CHAINS)
+
 
 def _b64url_encode(data):
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
@@ -550,6 +579,14 @@ def get_prospects():
         q = q.filter(Prospect.email != "", Prospect.email.isnot(None))
     elif has_email == "without":
         q = q.filter(db.or_(Prospect.email == "", Prospect.email.is_(None)))
+
+    chain_filter = request.args.get("chain", "")
+    if chain_filter == "independent":
+        for chain in HOTEL_CHAINS:
+            q = q.filter(~Prospect.nom.ilike(f"%{chain}%"))
+    elif chain_filter == "chain":
+        conditions = [Prospect.nom.ilike(f"%{chain}%") for chain in HOTEL_CHAINS[:20]]
+        q = q.filter(db.or_(*conditions))
 
     sort = request.args.get("sort", "date")
     if sort == "score":
@@ -2482,6 +2519,24 @@ def import_datagouv():
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)[:300]}), 500
+
+# --- API: Tag chain vs independent -------------------------------------------
+@app.route("/api/prospects/tag-chains", methods=["POST"])
+@require_auth
+def tag_chains():
+    """Tag all prospects as chain or independent based on name matching."""
+    prospects = Prospect.query.all()
+    chains = 0
+    independents = 0
+    for p in prospects:
+        if _is_chain(p.nom):
+            if "chaîne" not in (p.notes or ""):
+                p.notes = ("chaîne | " + (p.notes or "")).strip(" |")
+            chains += 1
+        else:
+            independents += 1
+    db.session.commit()
+    return jsonify({"ok": True, "chains": chains, "independents": independents, "total": chains + independents})
 
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])
