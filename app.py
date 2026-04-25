@@ -1565,62 +1565,71 @@ def scrape_deep():
         if center_lat is None:
             return jsonify({"error": f"Ville '{city}' non trouvee. Essayez une grande ville ou verifiez l'orthographe."}), 400
 
-        # Step 2: Create a grid of search points (3x3 = 9 sectors)
-        step = radius_km / 111.0  # ~1 degree = 111km
-        grid_points = []
-        for dlat in [-step, 0, step]:
-            for dlng in [-step, 0, step]:
-                grid_points.append((center_lat + dlat, center_lng + dlng))
+        # Step 2: Create a grid of search points (5 points: center + NSEW)
+        step = radius_km / 111.0
+        grid_points = [
+            (center_lat, center_lng),
+            (center_lat + step, center_lng),
+            (center_lat - step, center_lng),
+            (center_lat, center_lng + step),
+            (center_lat, center_lng - step),
+        ]
 
         # Step 3: Load existing prospects for dedup
         existing_names = set()
-        for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
-            existing_names.add(row[0])
+        try:
+            for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
+                existing_names.add(row[0])
+        except Exception:
+            pass
 
-        # Step 4: Search each keyword x grid point
+        # Step 4: Search each grid point
         seen_place_ids = set()
         all_results = []
         api_calls = 0
 
         for kw in keywords:
           for lat, lng in grid_points:
-            params = {
-                "location": f"{lat},{lng}",
-                "radius": radius_km * 1000 // 3,
-                "keyword": kw,
-                "key": api_key,
-                "language": "fr",
-            }
-            resp = req.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
-                          params=params, timeout=15)
-            _track_api_call()
-            api_calls += 1
-            page_data = resp.json()
+            try:
+                params = {
+                    "location": f"{lat},{lng}",
+                    "radius": radius_km * 1000 // 3,
+                    "keyword": kw,
+                    "key": api_key,
+                    "language": "fr",
+                }
+                resp = req.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+                              params=params, timeout=10)
+                _track_api_call()
+                api_calls += 1
+                page_data = resp.json()
 
-            if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
-                continue
-
-            for place in page_data.get("results", []):
-                pid = place.get("place_id", "")
-                if pid in seen_place_ids:
+                if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
                     continue
-                seen_place_ids.add(pid)
 
-                name = place.get("name", "")
-                addr = place.get("vicinity", "") or place.get("formatted_address", "")
-                is_dup = name.lower() in existing_names
+                for place in page_data.get("results", []):
+                    pid = place.get("place_id", "")
+                    if pid in seen_place_ids:
+                        continue
+                    seen_place_ids.add(pid)
 
-                all_results.append({
-                    "placeId": pid,
-                    "nom": name,
-                    "adresse": addr,
-                    "note": place.get("rating", 0),
-                    "avis": place.get("user_ratings_total", 0),
-                    "types": place.get("types", []),
-                    "lat": place.get("geometry", {}).get("location", {}).get("lat"),
-                    "lng": place.get("geometry", {}).get("location", {}).get("lng"),
-                    "duplicate": is_dup,
-                })
+                    name = place.get("name", "")
+                    addr = place.get("vicinity", "") or place.get("formatted_address", "")
+                    is_dup = _normalize(name) in existing_names or name.lower() in existing_names
+
+                    all_results.append({
+                        "placeId": pid,
+                        "nom": name,
+                        "adresse": addr,
+                        "note": place.get("rating", 0),
+                        "avis": place.get("user_ratings_total", 0),
+                        "types": place.get("types", []),
+                        "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                        "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                        "duplicate": is_dup,
+                    })
+            except Exception:
+                continue
 
         new_count = sum(1 for r in all_results if not r.get("duplicate"))
         dup_count = sum(1 for r in all_results if r.get("duplicate"))
