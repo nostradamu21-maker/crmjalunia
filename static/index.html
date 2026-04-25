@@ -778,7 +778,6 @@ function ScrapingView(){
   const[location,setLoc]=useState("");
   const[results,setResults]=useState([]);
   const[searching,setSearching]=useState(false);
-  const[nextPage,setNextPage]=useState(null);
   const[selected,setSelected]=useState(new Set());
   const[step,setStep]=useState("search");
   const[detailed,setDetailed]=useState([]);
@@ -787,17 +786,13 @@ function ScrapingView(){
   const[importResult,setImportResult]=useState(null);
   const[detailing,setDetailing]=useState(false);
 
-  const search=async(pageToken)=>{
+  const search=async()=>{
     setSearching(true);setImportResult(null);
-    if(pageToken){showToast("⏳","Chargement page suivante...","#00f0ff");await new Promise(r=>setTimeout(r,2500));}
-    try{const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location,nextPageToken:pageToken||""})});
-      const allResults=pageToken?[...results,...r.results]:r.results;
-      setResults(allResults);
-      // Auto-select only new (non-duplicate) results
+    try{const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
+      setResults(r.results);
       const newSelected=new Set();
-      allResults.forEach((item,i)=>{if(!item.duplicate)newSelected.add(i);});
-      setSelected(newSelected);
-      setNextPage(r.nextPageToken||null);setStep("results");
+      r.results.forEach((item,i)=>{if(!item.duplicate)newSelected.add(i);});
+      setSelected(newSelected);setStep("results");
       showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);
@@ -877,10 +872,7 @@ function ScrapingView(){
             h("div",{className:"text-xs text-gray-500 truncate"},r.adresse)),
           r.duplicate?h("span",{className:"text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-500"},"deja en base"):null,
           !r.duplicate&&r.note?h("span",{className:"text-xs text-neonYellow"},"⭐ "+r.note):null,
-          !r.duplicate&&r.avis?h("span",{className:"text-xs text-gray-500"},r.avis+" avis"):null))),
-      nextPage?h("button",{onClick:()=>search(nextPage),disabled:searching,
-        className:"mt-3 w-full py-2 border border-gray-700 rounded-lg text-sm text-gray-400 hover:border-neon"},
-        searching?"Chargement...":"Charger plus de resultats"):null):null,
+          !r.duplicate&&r.avis?h("span",{className:"text-xs text-gray-500"},r.avis+" avis"):null)))):null,
 
     // Detailed results with emails
     step==="detailed"&&detailed.length>0?h("div",{className:"card-dark p-6"},

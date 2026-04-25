@@ -210,7 +210,7 @@ def _get_warmup_limit():
     """Calculate daily send limit based on warmup schedule."""
     warmup = Setting.get("warmup_enabled", "false")
     if warmup != "true":
-        return int(Setting.get("daily_limit", "30"))
+        return _safe_int(Setting.get("daily_limit", "30"), 30)
 
     start_str = Setting.get("warmup_start_date", "")
     if not start_str:
@@ -220,10 +220,10 @@ def _get_warmup_limit():
     try:
         start = datetime.strptime(start_str, "%Y-%m-%d")
     except ValueError:
-        return int(Setting.get("daily_limit", "30"))
+        return _safe_int(Setting.get("daily_limit", "30"), 30)
 
     days = (datetime.now(timezone.utc) - start.replace(tzinfo=timezone.utc)).days
-    max_limit = int(Setting.get("daily_limit", "30"))
+    max_limit = _safe_int(Setting.get("daily_limit", "30"), 30)
 
     # Warmup schedule: gradual increase
     if days < 3:
@@ -263,7 +263,13 @@ def _calculate_score(prospect):
     prospect.score = s
     return s
 
-def _get_france_hour():
+def _safe_int(val, default):
+    """Convert to int, return default if empty/invalid."""
+    try:
+        return int(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
     """Get current hour in France (CET/CEST)."""
     now = datetime.now(timezone.utc)
     month = now.month
@@ -280,7 +286,7 @@ def _get_france_hour():
 def _get_smtp_config():
     return {
         "host": Setting.get("smtp_host", ""),
-        "port": int(Setting.get("smtp_port", "587")),
+        "port": _safe_int(Setting.get("smtp_port", "587"), 587),
         "user": Setting.get("smtp_user", ""),
         "password": Setting.get("smtp_pass", ""),
         "sender_email": Setting.get("sender_email", "") or Setting.get("smtp_user", ""),
@@ -401,7 +407,7 @@ def _send_one_email(prospect, subject, body, email_num, smtp_server=None, seen_e
 def _check_inbox_internal():
     """Check inbox for replies, STOP, bounces. Returns results dict."""
     imap_host = Setting.get("imap_host", "")
-    imap_port = int(Setting.get("imap_port", "993"))
+    imap_port = _safe_int(Setting.get("imap_port", "993"), 993)
     imap_user = Setting.get("imap_user", Setting.get("smtp_user", ""))
     imap_pass = Setting.get("imap_pass", Setting.get("smtp_pass", ""))
 
@@ -698,16 +704,16 @@ def auto_send():
         return jsonify({"error": "SMTP non configure"}), 400
 
     # Smart send hours check
-    send_start = int(Setting.get("send_hour_start", "9"))
-    send_end = int(Setting.get("send_hour_end", "18"))
+    send_start = _safe_int(Setting.get("send_hour_start", "9"), 9)
+    send_end = _safe_int(Setting.get("send_hour_end", "18"), 18)
     france_hour = _get_france_hour()
     if not (send_start <= france_hour < send_end):
         return jsonify({"ok": True, "sent": 0, "failed": 0, "outsideHours": True,
                         "message": f"Hors heures d'envoi ({send_start}h-{send_end}h France). Il est {france_hour}h."})
 
     daily_limit = _get_warmup_limit()
-    delay_email2 = int(Setting.get("delay_email2", "3"))
-    delay_email3 = int(Setting.get("delay_email3", "5"))
+    delay_email2 = _safe_int(Setting.get("delay_email2", "3"), 3)
+    delay_email3 = _safe_int(Setting.get("delay_email3", "5"), 5)
     max_per_run = int(request.args.get("max", "15"))
 
     # Count emails sent today
@@ -871,7 +877,7 @@ def campaign_stats():
         sent_today = EmailLog.query.filter(
             EmailLog.sent_at >= today_start, EmailLog.status == "sent"
         ).count()
-        daily_limit = int(Setting.get("daily_limit", "30"))
+        daily_limit = _safe_int(Setting.get("daily_limit", "30"), 30)
 
         ready_email1 = Prospect.query.filter(
             Prospect.status == "new", Prospect.email != "", Prospect.email.isnot(None),
@@ -879,8 +885,8 @@ def campaign_stats():
             Prospect.emails_sent == 0,
         ).count()
 
-        delay2 = int(Setting.get("delay_email2", "3"))
-        delay3 = int(Setting.get("delay_email3", "5"))
+        delay2 = _safe_int(Setting.get("delay_email2", "3"), 3)
+        delay3 = _safe_int(Setting.get("delay_email3", "5"), 5)
         now = datetime.now(timezone.utc)
 
         ready_email2 = Prospect.query.filter(
@@ -1325,7 +1331,7 @@ def test_smtp():
 @require_auth
 def test_imap():
     imap_host = Setting.get("imap_host", "")
-    imap_port = int(Setting.get("imap_port", "993"))
+    imap_port = _safe_int(Setting.get("imap_port", "993"), 993)
     imap_user = Setting.get("imap_user", Setting.get("smtp_user", ""))
     imap_pass = Setting.get("imap_pass", Setting.get("smtp_pass", ""))
     if not imap_host or not imap_user:
@@ -1359,34 +1365,14 @@ def scrape_search():
         return jsonify({"error": "Requete vide"}), 400
 
     location = data.get("location", "")
-    radius = data.get("radius", 50000)
-    next_page_token = data.get("nextPageToken", "")
+    max_pages = min(int(data.get("pages", 3)), 3)  # up to 60 results (3 pages x 20)
 
     full_query = query
     if location:
         full_query += " " + location
 
     try:
-        params = {"query": full_query, "key": api_key, "language": "fr"}
-        if next_page_token:
-            params = {"pagetoken": next_page_token, "key": api_key}
-            time.sleep(3)
-
-        resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
-                       params=params, timeout=15)
-        data = resp.json()
-
-        # Retry once if INVALID_REQUEST with page token (token not ready yet)
-        if next_page_token and data.get("status") == "INVALID_REQUEST":
-            time.sleep(3)
-            resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
-                           params=params, timeout=15)
-            data = resp.json()
-
-        if data.get("status") not in ("OK", "ZERO_RESULTS"):
-            return jsonify({"error": f"Google API: {data.get('status')} — {data.get('error_message', '')}"}), 400
-
-        # Load existing prospect names + addresses for dedup
+        # Load existing prospect names for dedup
         existing_names = set()
         for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
             existing_names.add(row[0])
@@ -1394,33 +1380,49 @@ def scrape_search():
         for row in db.session.execute(db.text("SELECT lower(adresse) FROM prospects WHERE adresse IS NOT NULL AND adresse != ''")):
             existing_addresses.add(row[0])
 
-        results = []
-        skipped = 0
-        for place in data.get("results", []):
-            name = place.get("name", "")
-            addr = place.get("formatted_address", "")
-            is_dup = name.lower() in existing_names or (addr and addr.lower() in existing_addresses)
-            results.append({
-                "placeId": place.get("place_id", ""),
-                "nom": name,
-                "adresse": addr,
-                "note": place.get("rating", 0),
-                "avis": place.get("user_ratings_total", 0),
-                "types": place.get("types", []),
-                "lat": place.get("geometry", {}).get("location", {}).get("lat"),
-                "lng": place.get("geometry", {}).get("location", {}).get("lng"),
-                "duplicate": is_dup,
-            })
+        all_results = []
+        params = {"query": full_query, "key": api_key, "language": "fr"}
 
-        new_count = sum(1 for r in results if not r.get("duplicate"))
-        dup_count = sum(1 for r in results if r.get("duplicate"))
+        for page in range(max_pages):
+            resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                           params=params, timeout=15)
+            page_data = resp.json()
+
+            if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
+                if page == 0:
+                    return jsonify({"error": f"Google API: {page_data.get('status')} — {page_data.get('error_message', '')}"}), 400
+                break
+
+            for place in page_data.get("results", []):
+                name = place.get("name", "")
+                addr = place.get("formatted_address", "")
+                is_dup = name.lower() in existing_names or (addr and addr.lower() in existing_addresses)
+                all_results.append({
+                    "placeId": place.get("place_id", ""),
+                    "nom": name,
+                    "adresse": addr,
+                    "note": place.get("rating", 0),
+                    "avis": place.get("user_ratings_total", 0),
+                    "types": place.get("types", []),
+                    "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                    "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                    "duplicate": is_dup,
+                })
+
+            npt = page_data.get("next_page_token")
+            if not npt:
+                break
+            time.sleep(3)
+            params = {"pagetoken": npt, "key": api_key}
+
+        new_count = sum(1 for r in all_results if not r.get("duplicate"))
+        dup_count = sum(1 for r in all_results if r.get("duplicate"))
 
         return jsonify({
-            "results": results,
-            "total": len(results),
+            "results": all_results,
+            "total": len(all_results),
             "new": new_count,
             "duplicates": dup_count,
-            "nextPageToken": data.get("next_page_token"),
         })
 
     except req.exceptions.Timeout:
