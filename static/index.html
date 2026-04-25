@@ -799,6 +799,24 @@ function ScrapingView(){
   const[detailing,setDetailing]=useState(false);
 
   const ALL_CATEGORIES=["gite","chambre d'hotes","hebergement","location vacances","meuble tourisme","appart hotel"];
+  const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+  const fetchAllPages=async(q,loc)=>{
+    const all=[];
+    let nextToken=null;
+    for(let page=0;page<3;page++){
+      const body={query:q,location:loc};
+      if(nextToken)body.nextPageToken=nextToken;
+      if(page>0)await wait(3000);
+      try{
+        const r=await api("/scrape/search",{method:"POST",body:JSON.stringify(body)});
+        for(const p of(r.results||[]))all.push(p);
+        nextToken=r.nextPageToken;
+        if(!nextToken)break;
+      }catch(e){break;}
+    }
+    return all;
+  };
 
   const search=async()=>{
     setSearching(true);setImportResult(null);setResults([]);
@@ -808,12 +826,12 @@ function ScrapingView(){
       const seen=new Set();
       for(let k=0;k<cats.length;k++){
         const q=deepMode?cats[k]:query;
-        const loc=location;
         if(cats.length>1)showToast("🔍","Categorie "+(k+1)+"/"+cats.length+": "+cats[k],"#a855f7");
         try{
-          const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query:q,location:loc})});
-          for(const p of(r.results||[])){if(!seen.has(p.placeId)){seen.add(p.placeId);allRes.push(p);}}
+          const pages=await fetchAllPages(q,location);
+          for(const p of pages){if(!seen.has(p.placeId)){seen.add(p.placeId);allRes.push(p);}}
           setResults([...allRes]);
+          showToast("📦",cats[k]+": "+pages.length+" resultats (total: "+allRes.length+")","#00f0ff");
         }catch(e){showToast("⚠️",cats[k]+": "+e.message,"#ffe600");}
       }
       const newCount=allRes.filter(r=>!r.duplicate).length;

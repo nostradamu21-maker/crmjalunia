@@ -1373,74 +1373,54 @@ def scrape_search():
         return jsonify({"error": "Requete vide"}), 400
 
     location = data.get("location", "").strip()
-    max_pages = min(_safe_int(data.get("pages", 3), 3), 3)
-
-    # Split locations by comma for multi-city search
-    locations = [l.strip() for l in location.split(",") if l.strip()] if location else [""]
+    next_page_token = data.get("nextPageToken", "")
 
     try:
         existing_names = set()
         for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
             existing_names.add(row[0])
-        existing_addresses = set()
-        for row in db.session.execute(db.text("SELECT lower(adresse) FROM prospects WHERE adresse IS NOT NULL AND adresse != ''")):
-            existing_addresses.add(row[0])
 
-        seen_place_ids = set()
         all_results = []
 
-        for loc in locations:
-            full_query = query + (" " + loc if loc else "")
+        if next_page_token:
+            params = {"pagetoken": next_page_token, "key": api_key}
+        else:
+            full_query = query + (" " + location if location else "")
             params = {"query": full_query, "key": api_key, "language": "fr"}
 
-            for page in range(max_pages):
-                resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
-                               params=params, timeout=15)
-                _track_api_call()
-                page_data = resp.json()
+        resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                       params=params, timeout=15)
+        _track_api_call()
+        page_data = resp.json()
 
-                if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
-                    if page == 0 and len(locations) == 1:
-                        return jsonify({"error": f"Google API: {page_data.get('status')} — {page_data.get('error_message', '')}"}), 400
-                    break
+        if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
+            return jsonify({"error": f"Google API: {page_data.get('status')} — {page_data.get('error_message', '')}"}), 400
 
-                for place in page_data.get("results", []):
-                    pid = place.get("place_id", "")
-                    if pid in seen_place_ids:
-                        continue
-                    seen_place_ids.add(pid)
-
-                    name = place.get("name", "")
-                    addr = place.get("formatted_address", "")
-                    is_dup = name.lower() in existing_names or (addr and addr.lower() in existing_addresses)
-                    all_results.append({
-                        "placeId": pid,
-                        "nom": name,
-                        "adresse": addr,
-                        "note": place.get("rating", 0),
-                        "avis": place.get("user_ratings_total", 0),
-                        "types": place.get("types", []),
-                        "lat": place.get("geometry", {}).get("location", {}).get("lat"),
-                        "lng": place.get("geometry", {}).get("location", {}).get("lng"),
-                        "duplicate": is_dup,
-                        "source": loc or "global",
-                    })
-
-                npt = page_data.get("next_page_token")
-                if not npt:
-                    break
-                time.sleep(3)
-                params = {"pagetoken": npt, "key": api_key}
+        for place in page_data.get("results", []):
+            name = place.get("name", "")
+            is_dup = _normalize(name) in existing_names or name.lower() in existing_names
+            all_results.append({
+                "placeId": place.get("place_id", ""),
+                "nom": name,
+                "adresse": place.get("formatted_address", ""),
+                "note": place.get("rating", 0),
+                "avis": place.get("user_ratings_total", 0),
+                "types": place.get("types", []),
+                "lat": place.get("geometry", {}).get("location", {}).get("lat"),
+                "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                "duplicate": is_dup,
+            })
 
         new_count = sum(1 for r in all_results if not r.get("duplicate"))
         dup_count = sum(1 for r in all_results if r.get("duplicate"))
+        npt = page_data.get("next_page_token") if page_data else None
 
         return jsonify({
             "results": all_results,
             "total": len(all_results),
             "new": new_count,
             "duplicates": dup_count,
-            "locations": len(locations),
+            "nextPageToken": npt,
         })
 
     except req.exceptions.Timeout:
