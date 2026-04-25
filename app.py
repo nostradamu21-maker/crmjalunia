@@ -2749,11 +2749,11 @@ def datatourisme_import():
             "fields": "uuid,label,type,hasContact,isLocatedAt",
         }
         filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation'
-            if dept:
-                filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
-            params["filters"] = filters
-            r = req.get("https://api.datatourisme.fr/v1/catalog",
-                       params=params, headers=headers, timeout=30)
+        if dept:
+            filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
+        params["filters"] = filters
+        r = req.get("https://api.datatourisme.fr/v1/catalog",
+                   params=params, headers=headers, timeout=30)
 
         if r.status_code != 200:
             return jsonify({"error": f"HTTP {r.status_code} — {r.text[:200]}"}), 400
