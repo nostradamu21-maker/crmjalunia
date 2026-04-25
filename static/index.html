@@ -368,23 +368,26 @@ function ProspectTable({onSelect}){
   const[enriching,setEnriching]=useState(false);
   const[enrichResult,setEnrichResult]=useState(null);
   const[enrichAuto,setEnrichAuto]=useState(false);
-  const[enrichTotal,setEnrichTotal]=useState({found:0,processed:0});
+  const[enrichTotal,setEnrichTotal]=useState({emails:0,phones:0,processed:0});
   const[countdown,setCountdown]=useState(0);
   const enrichAutoRef=useRef(false);
   const countdownRef=useRef(null);
+  const[enrichStats,setEnrichStats]=useState(null);
   const[cleaning,setCleaning]=useState(false);
   const[cleanPreview,setCleanPreview]=useState(null);
+  useEffect(()=>{api("/enrich/stats").then(setEnrichStats).catch(()=>{});},[]);
 
   const runOneEnrich=async()=>{
     setEnriching(true);setCountdown(0);
     try{
-      const r=await api("/enrich-emails",{method:"POST",body:JSON.stringify({batchSize:15})});
-      setEnrichResult(r);load();
-      setEnrichTotal(prev=>({found:prev.found+(r.found||0),processed:prev.processed+(r.processed||0)}));
-      const methods=(r.details||[]).map(d=>d.method).filter(Boolean);
-      const mStr=methods.length?" via "+[...new Set(methods)].join(", "):"";
-      if(r.found>0)showToast("📧",r.found+" emails trouves"+mStr+" — "+r.remaining+" restants","#00ff88");
-      else showToast("🔍","0 email ce lot — "+r.remaining+" restants","#64748b");
+      const r=await api("/enrich",{method:"POST",body:JSON.stringify({batchSize:10})});
+      setEnrichResult(r);load();api("/enrich/stats").then(setEnrichStats).catch(()=>{});
+      setEnrichTotal(prev=>({emails:prev.emails+(r.emailsFound||0),phones:prev.phones+(r.phonesFound||0),processed:prev.processed+(r.processed||0)}));
+      const parts=[];
+      if(r.emailsFound)parts.push(r.emailsFound+" emails");
+      if(r.phonesFound)parts.push(r.phonesFound+" tels");
+      if(parts.length>0)showToast("📧",parts.join(" + ")+" — "+r.remaining+" restants","#00ff88");
+      else showToast("🔍","Rien ce lot — "+r.remaining+" restants","#64748b");
       setEnriching(false);
       if(enrichAutoRef.current&&r.remaining>0){
         setCountdown(10);
@@ -458,9 +461,28 @@ function ProspectTable({onSelect}){
         cleaning?"Scan...":"🗑️ Nettoyer faux"),
       h("button",{onClick:toggleEnrichAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(enrichAuto?"border-red-500/40 text-red-400 hover:border-red-400":"border-purple-500/40 text-purple-400 hover:border-purple-400")+(enriching?" animate-pulse":"")},
-        enrichAuto?(enriching?"🔍 Scraping...":(countdown>0?"⏳ Prochain lot dans "+countdown+"s":"🔍 Scraping...")):"🔍 Trouver emails"),
+        enrichAuto?(enriching?"🔍 Enrichissement...":(countdown>0?"⏳ "+countdown+"s":"🔍 En cours...")):"🔍 Enrichir (email+tel)"),
       h("span",{className:"text-sm text-gray-500 ml-auto"},data.total.toLocaleString("fr-FR")+" prospects"),
-      enrichTotal.found>0?h("span",{className:"text-xs text-neonGreen ml-2"},"📧 "+enrichTotal.found+" trouves / "+enrichTotal.processed+" scannes"):null),
+      enrichTotal.emails+enrichTotal.phones>0?h("span",{className:"text-xs text-neonGreen ml-2"},"📧"+enrichTotal.emails+" 📞"+enrichTotal.phones+" / "+enrichTotal.processed+" scannes"):null),
+    enrichStats?h("div",{className:"mb-4 flex gap-4"},
+      h("div",{className:"flex-1 card-dark p-3"},
+        h("div",{className:"flex items-center justify-between mb-1"},
+          h("span",{className:"text-xs text-gray-500"},"🌐 Site web"),
+          h("span",{className:"text-xs font-bold text-neon"},enrichStats.pctSite+"%")),
+        h("div",{className:"w-full bg-gray-800 rounded-full h-2"},
+          h("div",{className:"h-2 rounded-full",style:{width:enrichStats.pctSite+"%",background:"linear-gradient(90deg,#00f0ff,#a855f7)"}}))),
+      h("div",{className:"flex-1 card-dark p-3"},
+        h("div",{className:"flex items-center justify-between mb-1"},
+          h("span",{className:"text-xs text-gray-500"},"📧 Email"),
+          h("span",{className:"text-xs font-bold "+(enrichStats.pctEmail>50?"text-neonGreen":"text-neonYellow")},enrichStats.withEmail.toLocaleString("fr-FR")+" ("+enrichStats.pctEmail+"%)")),
+        h("div",{className:"w-full bg-gray-800 rounded-full h-2"},
+          h("div",{className:"h-2 rounded-full",style:{width:enrichStats.pctEmail+"%",background:enrichStats.pctEmail>50?"linear-gradient(90deg,#00ff88,#00f0ff)":"linear-gradient(90deg,#ffe600,#ff6b00)"}}))),
+      h("div",{className:"flex-1 card-dark p-3"},
+        h("div",{className:"flex items-center justify-between mb-1"},
+          h("span",{className:"text-xs text-gray-500"},"📞 Telephone"),
+          h("span",{className:"text-xs font-bold "+(enrichStats.pctPhone>50?"text-neonGreen":"text-neonYellow")},enrichStats.withPhone.toLocaleString("fr-FR")+" ("+enrichStats.pctPhone+"%)")),
+        h("div",{className:"w-full bg-gray-800 rounded-full h-2"},
+          h("div",{className:"h-2 rounded-full",style:{width:enrichStats.pctPhone+"%",background:enrichStats.pctPhone>50?"linear-gradient(90deg,#00ff88,#00f0ff)":"linear-gradient(90deg,#ffe600,#ff6b00)"}})))):null,
     cleanPreview?h("div",{className:"mb-4 p-4 card-dark border border-red-800/40"},
       h("div",{className:"flex items-center justify-between mb-3"},
         h("span",{className:"text-sm font-bold text-red-400"},"🗑️ "+cleanPreview.count+" prospects fake/demo trouves"),
@@ -478,10 +500,10 @@ function ProspectTable({onSelect}){
           h("span",{className:"text-gray-600"},s.ville))))):null,
     enrichResult?h("div",{className:"mb-4 p-3 card-dark flex items-center justify-between"},
       h("div",{className:"text-sm"},
-        h("span",{className:"text-neonGreen font-bold"},"📧 "+enrichTotal.found+" emails trouves"),
-        h("span",{className:"text-gray-500 mx-2"},"sur "+enrichTotal.processed+" sites scannes"),
+        h("span",{className:"text-neonGreen font-bold"},"📧 "+enrichTotal.emails+" emails  📞 "+enrichTotal.phones+" tels"),
+        h("span",{className:"text-gray-500 mx-2"},"sur "+enrichTotal.processed+" scannes"),
         enrichResult.remaining>0?h("span",{className:"text-gray-500"},"— "+enrichResult.remaining+" restants"):h("span",{className:"text-neonGreen"},"✅ Termine !")),
-      enrichAuto?h("span",{className:"text-xs text-purple-400 animate-pulse"},"Auto-scraping actif"):null):null,
+      enrichAuto?h("span",{className:"text-xs text-purple-400 animate-pulse"},"Auto-enrichissement actif"):null):null,
     loading?h("div",{className:"text-center py-12 text-gray-500"},"Chargement..."):
     h("div",null,
       h("div",{className:"overflow-x-auto rounded-xl border border-gray-800"},

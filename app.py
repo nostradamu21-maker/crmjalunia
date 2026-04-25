@@ -1985,28 +1985,162 @@ def _scrape_emails_from_site(site_url):
 
     return best_email, list(found_emails), method
 
-@app.route("/api/enrich-emails", methods=["POST"])
+@app.route("/api/enrich", methods=["POST"])
 @require_auth
-def enrich_emails():
-    """Find emails from prospect websites. Processes N prospects per call."""
-    data = request.get_json() or {}
-    batch_size = min(int(data.get("batchSize", 15)), 20)
+def enrich():
+    """Find emails AND phone numbers from prospect websites."""
+    import requests as req
+    from bs4 import BeautifulSoup
 
+    data = request.get_json() or {}
+    batch_size = min(_safe_int(data.get("batchSize", 10), 10), 15)
+
+    # Find prospects with a website but missing email OR phone
     prospects = Prospect.query.filter(
         Prospect.site_web != "", Prospect.site_web.isnot(None),
-        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+        db.or_(
+            db.and_(Prospect.email == None),
+            db.and_(Prospect.email == ""),
+            db.and_(Prospect.telephone == None),
+            db.and_(Prospect.telephone == ""),
+        )
     ).limit(batch_size).all()
 
     if not prospects:
-        return jsonify({"ok": True, "processed": 0, "found": 0, "remaining": 0,
-                        "message": "Aucun prospect avec site web sans email"})
+        return jsonify({"ok": True, "processed": 0, "emailsFound": 0, "phonesFound": 0, "remaining": 0})
 
     remaining = Prospect.query.filter(
         Prospect.site_web != "", Prospect.site_web.isnot(None),
-        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+        db.or_(
+            db.and_(Prospect.email == None), db.and_(Prospect.email == ""),
+            db.and_(Prospect.telephone == None), db.and_(Prospect.telephone == ""),
+        )
     ).count() - len(prospects)
 
-    results = {"processed": 0, "found": 0, "remaining": remaining, "details": []}
+    phone_pattern = re.compile(r'(?:\+33|0)\s*[1-9](?:[\s.\-]?\d{2}){4}')
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
+    skip_emails = {"example@email.com", "email@example.com", "your@email.com",
+                   "info@w3.org", "wixpress@gmail.com", "support@wix.com", "name@domain.com"}
+    skip_domains = {"sentry.io", "googleapis.com", "w3.org", "schema.org", "facebook.com",
+                    "wix.com", "wordpress.org", "google.com", "cloudflare.com"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+    results = {"processed": 0, "emailsFound": 0, "phonesFound": 0, "remaining": remaining, "details": []}
+
+    for p in prospects:
+        site = p.site_web.strip()
+        if not site.startswith("http"):
+            site = "https://" + site
+        base = site.rstrip("/")
+        need_email = not p.email
+        need_phone = not p.telephone
+
+        found_emails = set()
+        found_phones = set()
+        pages = [site, base + "/contact", base + "/contactez-nous",
+                 base + "/mentions-legales", base + "/a-propos"]
+
+        for url in pages:
+            try:
+                resp = req.get(url, timeout=6, headers=headers, allow_redirects=True)
+                if resp.status_code != 200:
+                    continue
+                text = resp.text[:150000]
+                soup = BeautifulSoup(text, "html.parser")
+
+                # Emails: mailto links + regex
+                if need_email:
+                    for a in soup.find_all("a", href=True):
+                        if a["href"].startswith("mailto:"):
+                            em = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
+                            if _is_valid_email(em) and em not in skip_emails:
+                                found_emails.add(em)
+                    for em in email_pattern.findall(text):
+                        em = em.lower().strip()
+                        if _is_valid_email(em) and em not in skip_emails and em.split("@")[1] not in skip_domains:
+                            if not any(x in em for x in [".png", ".jpg", ".css", ".js"]):
+                                found_emails.add(em)
+
+                # Phones: tel links + regex
+                if need_phone:
+                    for a in soup.find_all("a", href=True):
+                        if a["href"].startswith("tel:"):
+                            ph = a["href"].replace("tel:", "").strip()
+                            if len(ph) >= 10:
+                                found_phones.add(ph)
+                    for ph in phone_pattern.findall(text):
+                        clean = re.sub(r'[\s.\-]', '', ph)
+                        if len(clean) >= 10:
+                            found_phones.add(clean)
+
+                if (found_emails or not need_email) and (found_phones or not need_phone):
+                    break
+            except Exception:
+                continue
+
+        # Pick best email
+        detail = {"nom": p.nom}
+        if need_email and found_emails:
+            from urllib.parse import urlparse
+            domain = urlparse(site).netloc.replace("www.", "")
+            same_domain = [em for em in found_emails if em.endswith("@" + domain)]
+            pool = same_domain if same_domain else list(found_emails)
+            best = ""
+            for prefix in ["contact@", "info@", "hello@", "accueil@", "reservation@"]:
+                for em in pool:
+                    if em.startswith(prefix):
+                        best = em
+                        break
+                if best:
+                    break
+            if not best:
+                best = sorted(pool)[0]
+            p.email = best[:200]
+            detail["email"] = best
+            results["emailsFound"] += 1
+
+        if need_phone and found_phones:
+            p.telephone = sorted(found_phones)[0][:30]
+            detail["phone"] = p.telephone
+            results["phonesFound"] += 1
+
+        if detail.get("email") or detail.get("phone"):
+            _calculate_score(p)
+            results["details"].append(detail)
+
+        results["processed"] += 1
+
+    db.session.commit()
+    return jsonify({"ok": True, **results})
+
+# Keep old endpoint as alias
+@app.route("/api/enrich-emails", methods=["POST"])
+@require_auth
+def enrich_emails():
+    return enrich()
+
+# --- API: Enrichment stats ----------------------------------------------------
+@app.route("/api/enrich/stats")
+@require_auth
+def enrich_stats():
+    total = Prospect.query.count()
+    with_site = Prospect.query.filter(Prospect.site_web != "", Prospect.site_web.isnot(None)).count()
+    with_email = Prospect.query.filter(Prospect.email != "", Prospect.email.isnot(None)).count()
+    with_phone = Prospect.query.filter(Prospect.telephone != "", Prospect.telephone.isnot(None)).count()
+    need_enrichment = Prospect.query.filter(
+        Prospect.site_web != "", Prospect.site_web.isnot(None),
+        db.or_(
+            db.and_(Prospect.email == None), db.and_(Prospect.email == ""),
+            db.and_(Prospect.telephone == None), db.and_(Prospect.telephone == ""),
+        )
+    ).count()
+    return jsonify({
+        "total": total, "withSite": with_site, "withEmail": with_email, "withPhone": with_phone,
+        "needEnrichment": need_enrichment,
+        "pctSite": round(with_site / total * 100) if total else 0,
+        "pctEmail": round(with_email / total * 100) if total else 0,
+        "pctPhone": round(with_phone / total * 100) if total else 0,
+    })
 
     for p in prospects:
         best_email, all_emails, method = _scrape_emails_from_site(p.site_web)
