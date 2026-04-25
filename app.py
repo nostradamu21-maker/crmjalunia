@@ -2103,30 +2103,16 @@ def import_datagouv():
     url = data.get("url", "").strip()
     dept = data.get("departement", "").strip()
 
-    # Auto-convert data.gouv.fr page URLs to direct download URLs
-    if "data.gouv.fr" in url and "resource_id=" in url:
-        import urllib.parse
-        parsed_url = urllib.parse.urlparse(url)
-        params = urllib.parse.parse_qs(parsed_url.query)
-        rid = params.get("resource_id", [""])[0]
+    # Auto-convert data.gouv.fr URLs to direct download
+    if "data.gouv.fr" in url:
+        # Extract resource_id from any format
+        rid = ""
+        if "resource_id=" in url:
+            rid = url.split("resource_id=")[-1].split("&")[0].split("#")[0].strip()
+        elif "/r/" in url:
+            rid = url.split("/r/")[-1].split("?")[0].split("/")[0].strip()
         if rid:
             url = f"https://www.data.gouv.fr/fr/datasets/r/{rid}"
-    elif "data.gouv.fr/datasets/" in url and "/r/" not in url:
-        # It's a dataset page URL, not a resource URL — try to get the first CSV resource
-        import requests as req2
-        try:
-            # Extract dataset slug
-            slug = url.split("/datasets/")[-1].split("?")[0].split("/")[0].strip("/")
-            api_url = f"https://www.data.gouv.fr/api/1/datasets/{slug}/"
-            r = req2.get(api_url, timeout=10)
-            if r.status_code == 200:
-                ds = r.json()
-                for res in ds.get("resources", []):
-                    if res.get("format", "").lower() in ("csv", "json"):
-                        url = res["url"]
-                        break
-        except Exception:
-            pass
 
     if not url:
         return jsonify({"error": "URL requise"}), 400
