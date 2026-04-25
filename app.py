@@ -2104,9 +2104,9 @@ def enrich():
     """Find emails AND phone numbers from prospect websites."""
     import requests as req
     from bs4 import BeautifulSoup
-
-    data = request.get_json() or {}
-    batch_size = min(_safe_int(data.get("batchSize", 10), 10), 15)
+    try:
+        data = request.get_json() or {}
+        batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)
 
     # Find prospects with a website but missing email OR phone
     prospects = Prospect.query.filter(
@@ -2223,8 +2223,11 @@ def enrich():
 
         results["processed"] += 1
 
-    db.session.commit()
-    return jsonify({"ok": True, **results})
+        db.session.commit()
+        return jsonify({"ok": True, **results})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)[:300]}), 500
 
 # Keep old endpoint as alias
 @app.route("/api/enrich-emails", methods=["POST"])
@@ -2495,16 +2498,15 @@ def import_datagouv():
 def detect_franchises():
     """Check prospects against the official French business registry. Free API, no key needed."""
     import requests as req
+    try:
+        data = request.get_json() or {}
+        batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)
 
-    data = request.get_json() or {}
-    batch_size = min(_safe_int(data.get("batchSize", 10), 10), 20)
-
-    # Find prospects not yet checked
-    prospects = Prospect.query.filter(
-        Prospect.nom != "", Prospect.nom.isnot(None),
-        ~Prospect.notes.ilike("%franchise%"),
-        ~Prospect.notes.ilike("%independant%"),
-    ).limit(batch_size).all()
+        prospects = Prospect.query.filter(
+            Prospect.nom != "", Prospect.nom.isnot(None),
+            ~Prospect.notes.ilike("%franchise%"),
+            ~Prospect.notes.ilike("%independant%"),
+        ).limit(batch_size).all()
 
     if not prospects:
         return jsonify({"ok": True, "processed": 0, "franchises": 0, "independants": 0, "remaining": 0})
@@ -2557,8 +2559,11 @@ def detect_franchises():
             pass
         results["processed"] += 1
 
-    db.session.commit()
-    return jsonify({"ok": True, **results})
+        db.session.commit()
+        return jsonify({"ok": True, **results})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)[:300]}), 500
 
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])

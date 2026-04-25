@@ -444,7 +444,7 @@ function ProspectTable({onSelect}){
   const runOneEnrich=async()=>{
     setEnriching(true);setCountdown(0);
     try{
-      const r=await api("/enrich",{method:"POST",body:JSON.stringify({batchSize:10})});
+      const r=await api("/enrich",{method:"POST",body:JSON.stringify({batchSize:5})});
       setEnrichResult(r);load();api("/enrich/stats").then(setEnrichStats).catch(()=>{});
       setEnrichTotal(prev=>({emails:prev.emails+(r.emailsFound||0),phones:prev.phones+(r.phonesFound||0),processed:prev.processed+(r.processed||0)}));
       const parts=[];
