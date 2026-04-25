@@ -799,22 +799,37 @@ function ScrapingView(){
   const[importResult,setImportResult]=useState(null);
   const[detailing,setDetailing]=useState(false);
 
+  const CATEGORIES=["gîte","chambre d'hôtes","hébergement","location vacances","meublé tourisme","appart hotel","maison hôtes","lodge"];
+
   const search=async()=>{
-    setSearching(true);setImportResult(null);
+    setSearching(true);setImportResult(null);setResults([]);
     try{
-      let r;
       if(deepMode&&location){
-        showToast("🔍","Recherche approfondie en cours (9 secteurs)...","#a855f7");
-        r=await api("/scrape/deep",{method:"POST",body:JSON.stringify({query,city:location,radius})});
-        showToast("🔍",r.new+" nouveaux / "+r.total+" trouves ("+r.apiCalls+" appels API, "+r.keywords+" categories)","#00f0ff");
+        const allRes=[];
+        const seen=new Set();
+        let calls=0;
+        for(let k=0;k<CATEGORIES.length;k++){
+          showToast("🔍","Categorie "+(k+1)+"/"+CATEGORIES.length+": "+CATEGORIES[k]+"...","#a855f7");
+          try{
+            const r=await api("/scrape/deep",{method:"POST",body:JSON.stringify({query:CATEGORIES[k],city:location,radius,multi:false,keyword:CATEGORIES[k]})});
+            calls+=r.apiCalls||0;
+            for(const p of r.results){if(!seen.has(p.placeId)){seen.add(p.placeId);allRes.push(p);}}
+            setResults([...allRes]);
+          }catch(e){showToast("⚠️","Categorie "+CATEGORIES[k]+": "+e.message,"#ffe600");}
+        }
+        const newCount=allRes.filter(r=>!r.duplicate).length;
+        const dupCount=allRes.filter(r=>r.duplicate).length;
+        const newSel=new Set();allRes.forEach((r,i)=>{if(!r.duplicate)newSel.add(i);});setSelected(newSel);
+        setStep("results");
+        showToast("✅",newCount+" nouveaux / "+allRes.length+" trouves ("+calls+" appels API, "+CATEGORIES.length+" categories)","#00ff88");
+        if(newCount>20)launchConfetti();
       }else{
-        r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
+        const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
+        setResults(r.results);
+        const newSel=new Set();r.results.forEach((item,i)=>{if(!item.duplicate)newSel.add(i);});
+        setSelected(newSel);setStep("results");
         showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
       }
-      setResults(r.results);
-      const newSelected=new Set();
-      r.results.forEach((item,i)=>{if(!item.duplicate)newSelected.add(i);});
-      setSelected(newSelected);setStep("results");
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);refreshUsage();
   };

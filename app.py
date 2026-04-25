@@ -1513,7 +1513,7 @@ def scrape_deep():
         "meublé tourisme", "appart hotel", "maison hôtes", "lodge",
     ]
     multi = data.get("multi", True)
-    keywords = ACCOMMODATION_KEYWORDS if multi else [query]
+    keywords = ACCOMMODATION_KEYWORDS if (multi and not data.get("keyword")) else [data.get("keyword", query)]
 
     # Built-in French city coordinates (fallback if Geocoding API not enabled)
     FRENCH_CITIES = {
