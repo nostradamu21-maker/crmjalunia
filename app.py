@@ -263,7 +263,11 @@ def _calculate_score(prospect):
     prospect.score = s
     return s
 
-def _safe_int(val, default):
+def _normalize(text):
+    """Strip accents and lowercase for matching."""
+    import unicodedata
+    return unicodedata.normalize("NFD", text.lower().strip()).encode("ascii", "ignore").decode("ascii")
+
     """Convert to int, return default if empty/invalid."""
     try:
         return int(val) if val else default
@@ -1535,7 +1539,7 @@ def scrape_deep():
     try:
         # Step 1: Geocode the city
         center_lat, center_lng = None, None
-        city_lower = city.lower().strip()
+        city_lower = _normalize(city)
 
         # Try built-in coordinates first
         if city_lower in FRENCH_CITIES:

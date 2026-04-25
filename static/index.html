@@ -148,7 +148,9 @@ const RANK_ICONS=["🔰","⚡","🗡️","👑","💎","🌟"];
 let TOKEN=localStorage.getItem("crm_token")||"";
 const setToken=(t)=>{TOKEN=t;if(t)localStorage.setItem("crm_token",t);else localStorage.removeItem("crm_token");};
 const api=async(path,opts={})=>{
-  const res=await fetch("/api"+path,{...opts,headers:{"Content-Type":"application/json","Authorization":"Bearer "+TOKEN,...(opts.headers||{})}});
+  const fetchOpts={method:opts.method||"GET",headers:{"Authorization":"Bearer "+TOKEN}};
+  if(opts.body){fetchOpts.body=new Blob([opts.body],{type:"application/json"});}
+  const res=await fetch("/api"+path,fetchOpts);
   if(res.status===401&&path!=="/refresh-token"){setToken("");window._onAuthLost&&window._onAuthLost();throw new Error("Session expiree");}
   const data=await res.json();
   if(!res.ok)throw new Error(data.error||"Erreur");
