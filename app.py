@@ -73,7 +73,7 @@ def _auto_migrate(app):
             pass  # Column already exists or other non-critical error
 
 app = create_app()
-limiter = Limiter(get_remote_address, app=app, default_limits=["200 per minute"])
+limiter = Limiter(get_remote_address, app=app, default_limits=["500 per minute"])
 
 # Backfill unsubscribe tokens for existing prospects (batched)
 with app.app_context():
@@ -500,7 +500,7 @@ def _check_inbox_internal():
 
 # --- API: Auth ----------------------------------------------------------------
 @app.route("/api/login", methods=["POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("15 per minute")
 def login():
     data = request.get_json() or {}
     if data.get("password") == CRM_PASSWORD:
@@ -1354,7 +1354,7 @@ def test_imap():
 # --- API: Scraping Google Places -----------------------------------------------
 @app.route("/api/scrape/search", methods=["POST"])
 @require_auth
-@limiter.limit("10 per minute")
+@limiter.limit("30 per minute")
 def scrape_search():
     """Search Google Places API for businesses. Supports multi-city search."""
     import requests as req
@@ -1490,7 +1490,7 @@ def _track_api_call(n=1):
 
 @app.route("/api/scrape/deep", methods=["POST"])
 @require_auth
-@limiter.limit("3 per minute")
+@limiter.limit("20 per minute")
 def scrape_deep():
     """Deep search: geocode city, create grid, search each sector. Returns hundreds of results."""
     import requests as req
@@ -1700,7 +1700,7 @@ def scrape_details():
 
 @app.route("/api/scrape/extract-emails", methods=["POST"])
 @require_auth
-@limiter.limit("5 per minute")
+@limiter.limit("15 per minute")
 def scrape_extract_emails():
     """Extract email addresses from websites."""
     import requests as req
@@ -2037,7 +2037,7 @@ def _scrape_emails_from_site(site_url):
 
 @app.route("/api/enrich-emails", methods=["POST"])
 @require_auth
-@limiter.limit("3 per minute")
+@limiter.limit("20 per minute")
 def enrich_emails():
     """Find emails from prospect websites. Processes N prospects per call."""
     data = request.get_json() or {}
