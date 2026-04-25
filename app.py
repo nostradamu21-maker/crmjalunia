@@ -263,6 +263,13 @@ def _calculate_score(prospect):
     prospect.score = s
     return s
 
+def _safe_int(val, default):
+    """Convert to int, return default if empty/invalid."""
+    try:
+        return int(val) if val else default
+    except (ValueError, TypeError):
+        return default
+
 def _normalize(text):
     """Strip accents and lowercase for matching."""
     import unicodedata
