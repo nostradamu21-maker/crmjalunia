@@ -1404,8 +1404,27 @@ def scrape_search():
         if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
             return jsonify({"error": f"Google API: {page_data.get('status')} — {page_data.get('error_message', '')}"}), 400
 
+        # Types to exclude (not tourist accommodation)
+        EXCLUDE_TYPES = {"veterinary_care", "pet_store", "animal_shelter", "church",
+                         "school", "university", "hospital", "doctor", "dentist",
+                         "pharmacy", "police", "fire_station", "post_office",
+                         "car_dealer", "car_repair", "gas_station", "funeral_home",
+                         "local_government_office", "courthouse", "embassy"}
+        EXCLUDE_WORDS = ["animalier", "animaux", "spa animalier", "refuge animal",
+                         "pension canine", "pension feline", "chenil", "chatterie",
+                         "veterinaire", "clinique vet", "fourriere"]
+
         for place in page_data.get("results", []):
+            types = set(place.get("types", []))
             name = place.get("name", "")
+            name_lower = name.lower()
+
+            # Skip non-tourism results
+            if types & EXCLUDE_TYPES:
+                continue
+            if any(w in name_lower for w in EXCLUDE_WORDS):
+                continue
+
             is_dup = _normalize(name) in existing_names or name.lower() in existing_names
             all_results.append({
                 "placeId": place.get("place_id", ""),
