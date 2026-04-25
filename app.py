@@ -1985,6 +1985,90 @@ def _scrape_emails_from_site(site_url):
 
     return best_email, list(found_emails), method
 
+# --- API: Find websites via Google Places -------------------------------------
+@app.route("/api/enrich/websites", methods=["POST"])
+@require_auth
+def enrich_websites():
+    """Find websites for prospects that have a name+city but no website, using Google Places."""
+    import requests as req
+
+    api_key = Setting.get("google_places_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API Google Places non configuree"}), 400
+
+    data = request.get_json() or {}
+    batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)
+
+    prospects = Prospect.query.filter(
+        Prospect.nom != "", Prospect.nom.isnot(None),
+        Prospect.ville != "", Prospect.ville.isnot(None),
+        db.or_(Prospect.site_web == "", Prospect.site_web.is_(None)),
+    ).limit(batch_size).all()
+
+    if not prospects:
+        return jsonify({"ok": True, "processed": 0, "found": 0, "remaining": 0})
+
+    remaining = Prospect.query.filter(
+        Prospect.nom != "", Prospect.nom.isnot(None),
+        Prospect.ville != "", Prospect.ville.isnot(None),
+        db.or_(Prospect.site_web == "", Prospect.site_web.is_(None)),
+    ).count() - len(prospects)
+
+    results = {"processed": 0, "found": 0, "remaining": remaining, "details": [], "apiCalls": 0}
+
+    for p in prospects:
+        query = f"{p.nom} {p.ville}"
+        try:
+            # Text Search to find place
+            resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
+                          params={"query": query, "key": api_key, "language": "fr"}, timeout=10)
+            _track_api_call()
+            results["apiCalls"] += 1
+            data_resp = resp.json()
+
+            if data_resp.get("status") != "OK" or not data_resp.get("results"):
+                results["processed"] += 1
+                continue
+
+            place = data_resp["results"][0]
+            place_id = place.get("place_id", "")
+
+            # Place Details to get website + phone
+            if place_id:
+                det = req.get("https://maps.googleapis.com/maps/api/place/details/json",
+                             params={"place_id": place_id, "key": api_key,
+                                     "fields": "website,formatted_phone_number,url", "language": "fr"},
+                             timeout=10)
+                _track_api_call()
+                results["apiCalls"] += 1
+                detail = det.json().get("result", {})
+
+                website = detail.get("website", "")
+                phone = detail.get("formatted_phone_number", "")
+                gmaps = detail.get("url", "")
+
+                updated = False
+                if website and not p.site_web:
+                    p.site_web = website[:300]
+                    updated = True
+                if phone and not p.telephone:
+                    p.telephone = phone[:30]
+                    updated = True
+                if gmaps and not p.google_maps:
+                    p.google_maps = gmaps[:500]
+
+                if updated:
+                    _calculate_score(p)
+                    results["found"] += 1
+                    results["details"].append({"nom": p.nom, "site": website, "tel": phone})
+
+        except Exception:
+            pass
+        results["processed"] += 1
+
+    db.session.commit()
+    return jsonify({"ok": True, **results})
+
 @app.route("/api/enrich", methods=["POST"])
 @require_auth
 def enrich():

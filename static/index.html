@@ -373,6 +373,37 @@ function ProspectTable({onSelect}){
   const enrichAutoRef=useRef(false);
   const countdownRef=useRef(null);
   const[enrichStats,setEnrichStats]=useState(null);
+  const[phase,setPhase]=useState(1);
+  const[webSearching,setWebSearching]=useState(false);
+  const[webSearchAuto,setWebSearchAuto]=useState(false);
+  const[webTotal,setWebTotal]=useState({found:0,processed:0});
+  const webAutoRef=useRef(false);
+  const webCountdownRef=useRef(null);
+  const[webCountdown,setWebCountdown]=useState(0);
+
+  const runOneWebSearch=async()=>{
+    setWebSearching(true);setWebCountdown(0);
+    try{
+      const r=await api("/enrich/websites",{method:"POST",body:JSON.stringify({batchSize:5})});
+      setWebTotal(prev=>({found:prev.found+(r.found||0),processed:prev.processed+(r.processed||0)}));
+      api("/enrich/stats").then(setEnrichStats).catch(()=>{});refreshUsage&&refreshUsage();
+      if(r.found>0)showToast("🌐",r.found+" sites trouves ("+r.apiCalls+" appels API) — "+r.remaining+" restants","#00f0ff");
+      else showToast("🔍","0 site ce lot — "+r.remaining+" restants","#64748b");
+      setWebSearching(false);
+      if(webAutoRef.current&&r.remaining>0){
+        setWebCountdown(8);let c=8;
+        webCountdownRef.current=setInterval(()=>{c--;setWebCountdown(c);if(c<=0){clearInterval(webCountdownRef.current);if(webAutoRef.current)runOneWebSearch();}},1000);
+      }else if(r.remaining===0){webAutoRef.current=false;setWebSearchAuto(false);showToast("✅","Phase 1 terminee ! Lancez Phase 2","#00ff88");}
+    }catch(e){showToast("💀",e.message,"#ef4444");setWebSearching(false);
+      if(webAutoRef.current){setWebCountdown(10);let c=10;
+        webCountdownRef.current=setInterval(()=>{c--;setWebCountdown(c);if(c<=0){clearInterval(webCountdownRef.current);if(webAutoRef.current)runOneWebSearch();}},1000);}
+    }
+  };
+
+  const toggleWebAuto=()=>{
+    if(webSearchAuto){webAutoRef.current=false;setWebSearchAuto(false);clearInterval(webCountdownRef.current);setWebCountdown(0);}
+    else{webAutoRef.current=true;setWebSearchAuto(true);setWebTotal({found:0,processed:0});runOneWebSearch();}
+  };
   const[cleaning,setCleaning]=useState(false);
   const[cleanPreview,setCleanPreview]=useState(null);
   useEffect(()=>{api("/enrich/stats").then(setEnrichStats).catch(()=>{});},[]);
@@ -459,9 +490,12 @@ function ProspectTable({onSelect}){
         setCleaning(false);
       },disabled:cleaning,className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
         cleaning?"Scan...":"🗑️ Nettoyer faux"),
+      h("button",{onClick:toggleWebAuto,
+        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(webSearchAuto?"border-red-500/40 text-red-400":"border-cyan-500/40 text-cyan-400 hover:border-cyan-400")+(webSearching?" animate-pulse":"")},
+        webSearchAuto?(webSearching?"🌐 Recherche sites...":(webCountdown>0?"⏳ "+webCountdown+"s":"🌐 En cours...")):"🌐 Phase 1: Sites web"),
       h("button",{onClick:toggleEnrichAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(enrichAuto?"border-red-500/40 text-red-400 hover:border-red-400":"border-purple-500/40 text-purple-400 hover:border-purple-400")+(enriching?" animate-pulse":"")},
-        enrichAuto?(enriching?"🔍 Enrichissement...":(countdown>0?"⏳ "+countdown+"s":"🔍 En cours...")):"🔍 Enrichir (email+tel)"),
+        enrichAuto?(enriching?"📧 Enrichissement...":(countdown>0?"⏳ "+countdown+"s":"📧 En cours...")):"📧 Phase 2: Email+Tel"),
       h("span",{className:"text-sm text-gray-500 ml-auto"},data.total.toLocaleString("fr-FR")+" prospects"),
       enrichTotal.emails+enrichTotal.phones>0?h("span",{className:"text-xs text-neonGreen ml-2"},"📧"+enrichTotal.emails+" 📞"+enrichTotal.phones+" / "+enrichTotal.processed+" scannes"):null),
     enrichStats?h("div",{className:"mb-4 flex gap-4"},
