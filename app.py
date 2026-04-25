@@ -1020,7 +1020,8 @@ def get_settings():
             "tpl_email1_sujet", "tpl_email1_corps",
             "tpl_email2_sujet", "tpl_email2_corps",
             "tpl_email3_sujet", "tpl_email3_corps",
-            "google_places_api_key", "hunter_api_key", "domain_blacklist",
+            "google_places_api_key", "hunter_api_key", "datatourisme_api_key",
+            "domain_blacklist",
             "warmup_enabled", "warmup_start_date"]
     return jsonify({k: Setting.get(k, "") for k in keys})
 
@@ -2660,6 +2661,203 @@ def detect_franchises():
 
     db.session.commit()
     return jsonify({"ok": True, **results})
+
+# --- API: DATAtourisme integration --------------------------------------------
+@app.route("/api/datatourisme/search", methods=["POST"])
+@require_auth
+def datatourisme_search():
+    """Search DATAtourisme API for accommodations."""
+    import requests as req
+
+    api_key = Setting.get("datatourisme_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API DATAtourisme non configuree. Allez dans Config."}), 400
+
+    data = request.get_json() or {}
+    page = _safe_int(data.get("page", 1), 1)
+    size = min(_safe_int(data.get("size", 20), 20), 100)
+    dept = data.get("departement", "").strip()
+    commune = data.get("commune", "").strip()
+    debug = data.get("debug", False)
+
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+
+    # Build query params
+    params = {"page": page, "size": size}
+
+    # Filter by accommodation types
+    params["types"] = "schema:LodgingBusiness"
+
+    if dept:
+        params["departement"] = dept
+    if commune:
+        params["commune"] = commune
+
+    try:
+        r = req.get("https://api.datatourisme.fr/v1/datatourisme",
+                    params=params, headers=headers, timeout=15)
+
+        if r.status_code == 401:
+            return jsonify({"error": "Cle API DATAtourisme invalide"}), 401
+        if r.status_code != 200:
+            return jsonify({"error": f"DATAtourisme API: HTTP {r.status_code} — {r.text[:200]}"}), 400
+
+        response_data = r.json()
+
+        if debug:
+            # Return raw response for debugging
+            sample = response_data if isinstance(response_data, list) else response_data.get("results", response_data.get("data", response_data.get("member", [])))
+            if isinstance(sample, list):
+                sample = sample[:2]
+            return jsonify({"debug": True, "raw": response_data if not isinstance(response_data, list) else None,
+                            "sample": sample, "keys": list(sample[0].keys()) if sample and isinstance(sample[0], dict) else [],
+                            "type": str(type(response_data).__name__), "status": r.status_code})
+
+        # Parse results — handle various DATAtourisme response formats
+        items = []
+        if isinstance(response_data, list):
+            items = response_data
+        elif isinstance(response_data, dict):
+            items = (response_data.get("results") or response_data.get("data") or
+                     response_data.get("member") or response_data.get("@graph") or
+                     response_data.get("hydra:member") or [])
+            if not items and "rdfs:label" in response_data:
+                items = [response_data]
+
+        total_items = len(items)
+        if isinstance(response_data, dict):
+            total_items = (response_data.get("totalItems") or response_data.get("hydra:totalItems") or
+                          response_data.get("total") or len(items))
+
+        return jsonify({
+            "ok": True,
+            "results": items[:size],
+            "total": total_items,
+            "page": page,
+            "size": size,
+        })
+
+    except req.exceptions.Timeout:
+        return jsonify({"error": "Timeout DATAtourisme API"}), 504
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
+
+@app.route("/api/datatourisme/import", methods=["POST"])
+@require_auth
+def datatourisme_import():
+    """Import accommodations from DATAtourisme API page by page."""
+    import requests as req
+
+    api_key = Setting.get("datatourisme_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API DATAtourisme non configuree"}), 400
+
+    data = request.get_json() or {}
+    page = _safe_int(data.get("page", 1), 1)
+    size = min(_safe_int(data.get("size", 50), 50), 100)
+    dept = data.get("departement", "").strip()
+
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    params = {"page": page, "size": size, "types": "schema:LodgingBusiness"}
+    if dept:
+        params["departement"] = dept
+
+    try:
+        r = req.get("https://api.datatourisme.fr/v1/datatourisme",
+                    params=params, headers=headers, timeout=30)
+        if r.status_code != 200:
+            return jsonify({"error": f"HTTP {r.status_code}"}), 400
+
+        response_data = r.json()
+        items = []
+        if isinstance(response_data, list):
+            items = response_data
+        elif isinstance(response_data, dict):
+            items = (response_data.get("results") or response_data.get("data") or
+                     response_data.get("member") or response_data.get("hydra:member") or
+                     response_data.get("@graph") or [])
+
+        total = response_data.get("totalItems") or response_data.get("hydra:totalItems") or response_data.get("total") or 0 if isinstance(response_data, dict) else len(items)
+
+        existing_names = set()
+        try:
+            for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
+                existing_names.add(row[0])
+        except Exception:
+            pass
+
+        stats = {"imported": 0, "skipped": 0, "errors": 0, "total": total, "page": page}
+        batch = []
+
+        def _extract(item, *keys):
+            for k in keys:
+                v = item.get(k)
+                if v:
+                    if isinstance(v, dict):
+                        return v.get("@value", "") or v.get("fr", "") or str(v)
+                    if isinstance(v, list):
+                        return str(v[0].get("@value", v[0]) if isinstance(v[0], dict) else v[0]) if v else ""
+                    return str(v).strip()
+            return ""
+
+        for item in items:
+            if not isinstance(item, dict):
+                stats["errors"] += 1
+                continue
+
+            nom = _extract(item, "rdfs:label", "schema:name", "hasName", "dc:title",
+                           "nom", "nomoffre", "NOM COMMERCIAL", "name")[:200]
+            if not nom:
+                stats["errors"] += 1
+                continue
+
+            if _normalize(nom) in existing_names:
+                stats["skipped"] += 1
+                continue
+
+            # Address
+            addr_obj = item.get("schema:address") or item.get("isLocatedAt", {}).get("schema:address") or {}
+            if isinstance(addr_obj, list):
+                addr_obj = addr_obj[0] if addr_obj else {}
+            ville = _extract(addr_obj, "schema:addressLocality", "addressLocality", "commune")[:100]
+            cp = _extract(addr_obj, "schema:postalCode", "postalCode", "codepostal")[:10]
+            adresse = _extract(addr_obj, "schema:streetAddress", "streetAddress", "adresse1")[:300]
+
+            # Contact
+            contact = item.get("schema:contactPoint") or item.get("hasContact") or {}
+            if isinstance(contact, list):
+                contact = contact[0] if contact else {}
+            email = _extract(contact, "schema:email", "foaf:mbox", "email", "commmail")[:200].lower()
+            tel = _extract(contact, "schema:telephone", "telephone", "commtel", "commmob")[:30]
+            site = _extract(contact, "foaf:homepage", "schema:url") or _extract(item, "hasBookingContact", "commweb")
+            if isinstance(site, dict):
+                site = site.get("@value", "")
+            site = str(site)[:300]
+
+            type_ = _extract(item, "@type", "rdf:type", "type")[:80]
+
+            p = Prospect(
+                nom=nom, type=type_ or "hebergement", ville=ville,
+                region=(cp + " " + ville).strip()[:100],
+                email=email, telephone=tel, site_web=site,
+                adresse=adresse, status="new",
+                unsubscribe_token=secrets.token_urlsafe(32),
+            )
+            _calculate_score(p)
+            batch.append(p)
+            existing_names.add(_normalize(nom))
+            stats["imported"] += 1
+
+        if batch:
+            db.session.add_all(batch)
+            db.session.commit()
+
+        has_more = len(items) >= size
+        return jsonify({"ok": True, "hasMore": has_more, **stats})
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)[:300]}), 500
 
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])
