@@ -1057,16 +1057,17 @@ function ScrapingView(){
         },className:"px-3 py-2 border border-gray-700 rounded-lg text-xs text-gray-400 hover:border-neon"},"🔍 Tester l'API"),
         h("button",{id:"dt-import-btn",onClick:async()=>{
           const dept=document.getElementById("dt-dept").value;
-          const btn=document.getElementById("dt-import-btn");
-          let page=1;let totalImported=0;let totalSkipped=0;let hasMore=true;
+          let page=1;let totalImported=0;let totalSkipped=0;let hasMore=true;let nextUrl="";
           showToast("⏳","Import DATAtourisme en cours...","#a855f7");
           while(hasMore){
             try{
-              const r=await api("/datatourisme/import",{method:"POST",body:JSON.stringify({page,size:50,departement:dept})});
+              const body={page,page_size:100,departement:dept};
+              if(nextUrl)body.nextUrl=nextUrl;
+              const r=await api("/datatourisme/import",{method:"POST",body:JSON.stringify(body)});
               totalImported+=r.imported||0;totalSkipped+=r.skipped||0;
-              showToast("📦","Page "+page+" — "+totalImported+" importes, "+totalSkipped+" doublons","#00f0ff");
-              hasMore=r.hasMore;page++;
-              await new Promise(r=>setTimeout(r,1500));
+              showToast("📦","Page "+r.page+"/"+(r.totalPages||"?")+" — "+totalImported+" importes ("+r.total+" total)","#00f0ff");
+              hasMore=r.hasMore;nextUrl=r.nextUrl||"";page++;
+              await new Promise(r=>setTimeout(r,1000));
             }catch(e){showToast("💀","Page "+page+": "+e.message,"#ef4444");break;}
           }
           showToast("✅","DATAtourisme: "+totalImported+" hebergements importes !","#00ff88");

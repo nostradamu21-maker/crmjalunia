@@ -2671,42 +2671,60 @@ def datatourisme_search():
 
     api_key = Setting.get("datatourisme_api_key", "")
     if not api_key:
-        return jsonify({"error": "Cle API DATAtourisme non configuree. Allez dans Config."}), 400
+        return jsonify({"error": "Cle API DATAtourisme non configuree"}), 400
 
     data = request.get_json() or {}
-    debug = data.get("debug", False)
+    page = _safe_int(data.get("page", 1), 1)
+    page_size = min(_safe_int(data.get("page_size", 50), 50), 250)
     dept = data.get("departement", "").strip()
+    search_q = data.get("search", "").strip()
+    debug = data.get("debug", False)
 
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    headers = {"X-API-Key": api_key, "Accept": "application/json"}
 
-    # Try multiple possible endpoints
-    endpoints = [
-        "https://api.datatourisme.fr/v1/search",
-        "https://api.datatourisme.fr/v1/poi",
-        "https://api.datatourisme.fr/v1/lodging",
-        "https://api.datatourisme.fr/v1/hebergements",
-        "https://api.datatourisme.fr/v1/accommodation",
-        "https://api.datatourisme.fr/v1/datatourisme",
-        "https://api.datatourisme.fr/v1/",
-        "https://api.datatourisme.fr/api/v1/search",
-    ]
+    params = {
+        "page": page,
+        "page_size": page_size,
+        "lang": "fr",
+        "fields": "uuid,label,type,hasContact,isLocatedAt,hasReview,hasDescription",
+    }
 
-    if debug:
-        results = []
-        for ep in endpoints:
-            try:
-                params = {"size": 1}
-                if dept:
-                    params["departement"] = dept
-                r = req.get(ep, params=params, headers=headers, timeout=5)
-                results.append({"endpoint": ep, "status": r.status_code, "body": r.text[:300]})
-                if r.status_code == 200:
-                    break
-            except Exception as e:
-                results.append({"endpoint": ep, "error": str(e)[:100]})
-        return jsonify({"debug": True, "endpoints": results})
+    # Filter: only accommodation types
+    filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,NaturalAreaCampground,CollectiveAccommodation,HomeExchange,Hostel,RentalAccommodation,SelfCateringAccommodation'
+    if dept:
+        filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
+    params["filters"] = filters
 
-    return jsonify({"error": "Utilisez debug:true pour tester les endpoints"}), 400
+    if search_q:
+        params["search"] = search_q
+
+    try:
+        r = req.get("https://api.datatourisme.fr/v1/catalog",
+                    params=params, headers=headers, timeout=15)
+
+        if r.status_code == 401:
+            return jsonify({"error": "Cle API invalide"}), 401
+        if r.status_code != 200:
+            return jsonify({"error": f"DATAtourisme: HTTP {r.status_code} — {r.text[:300]}"}), 400
+
+        response_data = r.json()
+        objects = response_data.get("objects", [])
+        meta = response_data.get("meta", {})
+
+        if debug:
+            return jsonify({"debug": True, "meta": meta,
+                            "sample": objects[:2],
+                            "keys": list(objects[0].keys()) if objects else [],
+                            "status": r.status_code})
+
+        return jsonify({
+            "ok": True, "results": objects, "total": meta.get("total", 0),
+            "page": meta.get("page", 1), "totalPages": meta.get("total_pages", 0),
+            "nextUrl": meta.get("next"),
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)[:300]}), 500
 
 @app.route("/api/datatourisme/import", methods=["POST"])
 @require_auth
@@ -2720,30 +2738,35 @@ def datatourisme_import():
 
     data = request.get_json() or {}
     page = _safe_int(data.get("page", 1), 1)
-    size = min(_safe_int(data.get("size", 50), 50), 100)
+    page_size = min(_safe_int(data.get("page_size", 100), 100), 250)
     dept = data.get("departement", "").strip()
+    next_url = data.get("nextUrl", "")
 
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
-    params = {"page": page, "size": size, "types": "schema:LodgingBusiness"}
-    if dept:
-        params["departement"] = dept
+    headers = {"X-API-Key": api_key, "Accept": "application/json"}
 
     try:
-        r = req.get("https://api.datatourisme.fr/v1/datatourisme",
-                    params=params, headers=headers, timeout=30)
+        if next_url:
+            # Follow the "next" link from previous response
+            sep = "&" if "?" in next_url else "?"
+            r = req.get(next_url + sep + "api_key=" + api_key, timeout=30)
+        else:
+            params = {
+                "page": page, "page_size": page_size, "lang": "fr",
+                "fields": "uuid,label,type,hasContact,isLocatedAt",
+            }
+            filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation'
+            if dept:
+                filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
+            params["filters"] = filters
+            r = req.get("https://api.datatourisme.fr/v1/catalog",
+                       params=params, headers=headers, timeout=30)
+
         if r.status_code != 200:
-            return jsonify({"error": f"HTTP {r.status_code}"}), 400
+            return jsonify({"error": f"HTTP {r.status_code} — {r.text[:200]}"}), 400
 
         response_data = r.json()
-        items = []
-        if isinstance(response_data, list):
-            items = response_data
-        elif isinstance(response_data, dict):
-            items = (response_data.get("results") or response_data.get("data") or
-                     response_data.get("member") or response_data.get("hydra:member") or
-                     response_data.get("@graph") or [])
-
-        total = response_data.get("totalItems") or response_data.get("hydra:totalItems") or response_data.get("total") or 0 if isinstance(response_data, dict) else len(items)
+        objects = response_data.get("objects", [])
+        meta = response_data.get("meta", {})
 
         existing_names = set()
         try:
@@ -2752,27 +2775,38 @@ def datatourisme_import():
         except Exception:
             pass
 
-        stats = {"imported": 0, "skipped": 0, "errors": 0, "total": total, "page": page}
+        stats = {"imported": 0, "skipped": 0, "errors": 0,
+                 "total": meta.get("total", 0), "page": meta.get("page", page),
+                 "totalPages": meta.get("total_pages", 0)}
         batch = []
 
-        def _extract(item, *keys):
-            for k in keys:
-                v = item.get(k)
-                if v:
-                    if isinstance(v, dict):
-                        return v.get("@value", "") or v.get("fr", "") or str(v)
-                    if isinstance(v, list):
-                        return str(v[0].get("@value", v[0]) if isinstance(v[0], dict) else v[0]) if v else ""
-                    return str(v).strip()
+        def _dt_get(obj, *paths):
+            """Extract value from nested DATAtourisme object."""
+            for path in paths:
+                val = obj
+                for key in path.split("."):
+                    if isinstance(val, list):
+                        val = val[0] if val else {}
+                    if isinstance(val, dict):
+                        val = val.get(key)
+                    else:
+                        val = None
+                        break
+                if val and str(val).strip():
+                    if isinstance(val, dict):
+                        return val.get("fr", val.get("@value", str(val)))
+                    if isinstance(val, list):
+                        v = val[0]
+                        return v.get("fr", v.get("@value", str(v))) if isinstance(v, dict) else str(v)
+                    return str(val).strip()
             return ""
 
-        for item in items:
+        for item in objects:
             if not isinstance(item, dict):
                 stats["errors"] += 1
                 continue
 
-            nom = _extract(item, "rdfs:label", "schema:name", "hasName", "dc:title",
-                           "nom", "nomoffre", "NOM COMMERCIAL", "name")[:200]
+            nom = _dt_get(item, "label", "label.fr")[:200]
             if not nom:
                 stats["errors"] += 1
                 continue
@@ -2781,26 +2815,40 @@ def datatourisme_import():
                 stats["skipped"] += 1
                 continue
 
-            # Address
-            addr_obj = item.get("schema:address") or item.get("isLocatedAt", {}).get("schema:address") or {}
-            if isinstance(addr_obj, list):
-                addr_obj = addr_obj[0] if addr_obj else {}
-            ville = _extract(addr_obj, "schema:addressLocality", "addressLocality", "commune")[:100]
-            cp = _extract(addr_obj, "schema:postalCode", "postalCode", "codepostal")[:10]
-            adresse = _extract(addr_obj, "schema:streetAddress", "streetAddress", "adresse1")[:300]
+            # Location
+            loc = item.get("isLocatedAt", {})
+            if isinstance(loc, list):
+                loc = loc[0] if loc else {}
+            addr = loc.get("address", {})
+            if isinstance(addr, list):
+                addr = addr[0] if addr else {}
+
+            ville = _dt_get(addr, "addressLocality", "hasAddressCity.label")[:100]
+            cp = _dt_get(addr, "postalCode")[:10]
+            adresse = _dt_get(addr, "streetAddress")[:300]
 
             # Contact
-            contact = item.get("schema:contactPoint") or item.get("hasContact") or {}
-            if isinstance(contact, list):
-                contact = contact[0] if contact else {}
-            email = _extract(contact, "schema:email", "foaf:mbox", "email", "commmail")[:200].lower()
-            tel = _extract(contact, "schema:telephone", "telephone", "commtel", "commmob")[:30]
-            site = _extract(contact, "foaf:homepage", "schema:url") or _extract(item, "hasBookingContact", "commweb")
-            if isinstance(site, dict):
-                site = site.get("@value", "")
-            site = str(site)[:300]
+            contacts = item.get("hasContact", [])
+            if isinstance(contacts, dict):
+                contacts = [contacts]
+            email = ""
+            tel = ""
+            site = ""
+            for c in (contacts or []):
+                if not email:
+                    e = _dt_get(c, "email", "schema:email", "foaf:mbox")
+                    if e and "@" in e:
+                        email = e[:200].lower()
+                if not tel:
+                    t = _dt_get(c, "telephone", "schema:telephone")
+                    if t and len(t) >= 8:
+                        tel = t[:30]
+                if not site:
+                    s = _dt_get(c, "foaf:homepage", "schema:url", "homepage")
+                    if s and "http" in s:
+                        site = s[:300]
 
-            type_ = _extract(item, "@type", "rdf:type", "type")[:80]
+            type_ = _dt_get(item, "type")[:80]
 
             p = Prospect(
                 nom=nom, type=type_ or "hebergement", ville=ville,
@@ -2818,8 +2866,9 @@ def datatourisme_import():
             db.session.add_all(batch)
             db.session.commit()
 
-        has_more = len(items) >= size
-        return jsonify({"ok": True, "hasMore": has_more, **stats})
+        stats["hasMore"] = meta.get("next") is not None
+        stats["nextUrl"] = meta.get("next", "")
+        return jsonify({"ok": True, **stats})
 
     except Exception as e:
         db.session.rollback()
