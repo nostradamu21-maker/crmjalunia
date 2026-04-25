@@ -1388,6 +1388,7 @@ def scrape_search():
             for page in range(max_pages):
                 resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
                                params=params, timeout=15)
+                _track_api_call()
                 page_data = resp.json()
 
                 if page_data.get("status") not in ("OK", "ZERO_RESULTS"):
@@ -1439,6 +1440,50 @@ def scrape_search():
     except Exception as e:
         return jsonify({"error": str(e)[:300]}), 500
 
+# --- API: Google API usage tracking -------------------------------------------
+@app.route("/api/api-usage")
+@require_auth
+def api_usage():
+    """Track Google Places API usage from our own call counter."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+
+    today_calls = _safe_int(Setting.get(f"api_calls_{today}", "0"), 0)
+    month_calls = 0
+    for i in range(31):
+        d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        if not d.startswith(month):
+            break
+        month_calls += _safe_int(Setting.get(f"api_calls_{d}", "0"), 0)
+
+    # Google gives $200/month free credit
+    # Text Search: $32/1000 = $0.032 per call
+    # Nearby Search: $32/1000 = $0.032 per call
+    # Place Details: $17/1000 = $0.017 per call
+    # Geocoding: $5/1000 = $0.005 per call
+    cost_per_call = 0.032  # average
+    month_cost = round(month_calls * cost_per_call, 2)
+    free_budget = 200.0
+    remaining = round(free_budget - month_cost, 2)
+    max_safe_calls = int(free_budget / cost_per_call) if cost_per_call > 0 else 999999
+
+    return jsonify({
+        "today": today_calls,
+        "month": month_calls,
+        "monthCost": month_cost,
+        "freeBudget": free_budget,
+        "remaining": remaining,
+        "maxSafeCalls": max_safe_calls,
+        "pct": round(month_cost / free_budget * 100, 1),
+    })
+
+def _track_api_call(n=1):
+    """Increment today's API call counter."""
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    key = f"api_calls_{today}"
+    current = _safe_int(Setting.get(key, "0"), 0)
+    Setting.set(key, str(current + n))
+
 @app.route("/api/scrape/deep", methods=["POST"])
 @require_auth
 @limiter.limit("3 per minute")
@@ -1462,6 +1507,7 @@ def scrape_deep():
         # Step 1: Geocode the city
         geo_resp = req.get("https://maps.googleapis.com/maps/api/geocode/json",
                           params={"address": city + ", France", "key": api_key}, timeout=10)
+        _track_api_call()
         geo_data = geo_resp.json()
         if not geo_data.get("results"):
             return jsonify({"error": f"Ville '{city}' non trouvee"}), 400
@@ -1496,6 +1542,7 @@ def scrape_deep():
             }
             resp = req.get("https://maps.googleapis.com/maps/api/place/nearbysearch/json",
                           params=params, timeout=15)
+            _track_api_call()
             api_calls += 1
             page_data = resp.json()
 
@@ -1563,6 +1610,7 @@ def scrape_details():
                            params={"place_id": pid, "key": api_key, "language": "fr",
                                    "fields": "name,formatted_address,formatted_phone_number,website,rating,user_ratings_total,url,types,address_components"},
                            timeout=10)
+            _track_api_call()
             d = resp.json().get("result", {})
 
             ville = ""
