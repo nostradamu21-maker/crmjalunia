@@ -94,85 +94,6 @@ BASE_URL = os.environ.get("BASE_URL", "https://crmjalunia.onrender.com")
 CRM_PASSWORD = os.environ.get("CRM_PASSWORD", "jalunia2026")
 API_SECRET = os.environ.get("API_SECRET", "")
 
-HOTEL_CHAINS = [
-    "ibis", "mercure", "novotel", "sofitel", "pullman", "mgallery", "adagio", "mama shelter",
-    "greet", "tribe hotel", "jo&joe", "formule 1", "f1 hotel", "hotelf1",
-    "kyriad", "campanile", "premiere classe", "golden tulip", "tulip inn",
-    "b&b hotel", "b&b hôtel", "b and b",
-    "best western", "sure hotel",
-    "holiday inn", "crowne plaza", "intercontinental", "ihg",
-    "hilton", "hampton inn", "doubletree", "conrad", "curio",
-    "marriott", "courtyard by", "sheraton", "le meridien", "westin", "w hotel", "residence inn", "moxy",
-    "accor", "all seasons",
-    "radisson", "park inn",
-    "hyatt", "ramada", "days inn", "super 8", "wyndham",
-    "brit hotel", "brithotel",
-    "fasthotel", "fast hotel",
-    "appart.city", "appartcity", "appart city",
-    "citadines", "residhome", "adagio access",
-    "all suites", "cerise hotels",
-    "premiere classe", "comfort hotel", "quality hotel", "clarion",
-    "logis hotel", "logis de france",
-    "inter-hotel", "interhotel",
-    "the originals", "relais du silence",
-]
-
-CHAIN_DOMAINS = [
-    "accor.com", "accorhotels.com", "ibis.com", "mercure.com", "novotel.com", "sofitel.com",
-    "pullmanhotels.com", "mgallery.com", "adagio-city.com",
-    "bestwestern.fr", "bestwestern.com",
-    "ihg.com", "holidayinn.com",
-    "hilton.com", "hamptoninn.com", "doubletree.com",
-    "marriott.com", "sheraton.com", "westin.com", "lemeridien.com",
-    "radissonhotels.com", "hyatt.com", "wyndhamhotels.com",
-    "campanile.com", "kyriad.com", "premiereclasse.com", "louvrehotels.com",
-    "hotel-bb.com", "hotelbb.com",
-    "brithotel.fr", "fasthotel.com",
-    "appartcity.com", "citadines.com", "residhome.com",
-    "logishotels.com",
-    "theoriginalshotels.com",
-]
-
-def _is_chain(name, site_web="", notes=""):
-    """Check if a prospect is a chain hotel using name, website domain, and room count."""
-    if not name:
-        return False
-    n = name.lower().strip()
-
-    # Method 1: Name matching
-    if any(chain in n for chain in HOTEL_CHAINS):
-        return True
-
-    # Method 2: Website domain matching
-    if site_web:
-        site_lower = site_web.lower()
-        if any(domain in site_lower for domain in CHAIN_DOMAINS):
-            return True
-
-    # Method 3: Room count (from notes field, ex: "3 étoiles")
-    # Large room count suggests chain, but not conclusive alone
-    # Skipped as secondary signal
-
-    return False
-
-def _detect_chain_batch():
-    """Detect chains using name frequency across cities."""
-    from collections import Counter
-    # Count how many different cities each base name appears in
-    all_prospects = db.session.query(Prospect.nom, Prospect.ville).all()
-    name_cities = {}
-    for nom, ville in all_prospects:
-        if not nom:
-            continue
-        # Normalize: remove city name, numbers, "hotel" prefix
-        base = _normalize(nom).strip()
-        if base not in name_cities:
-            name_cities[base] = set()
-        if ville:
-            name_cities[base].add(ville.lower())
-    # Names that appear in 3+ different cities are likely chains
-    chain_names = {name for name, cities in name_cities.items() if len(cities) >= 3}
-    return chain_names
 
 
 def _b64url_encode(data):
@@ -632,9 +553,9 @@ def get_prospects():
 
     chain_filter = request.args.get("chain", "")
     if chain_filter == "independent":
-        q = q.filter(~Prospect.notes.ilike("%chaîne%"))
+        q = q.filter(Prospect.notes.ilike("%independant%"))
     elif chain_filter == "chain":
-        q = q.filter(Prospect.notes.ilike("%chaîne%"))
+        q = q.filter(Prospect.notes.ilike("%franchise%"))
 
     sort = request.args.get("sort", "date")
     if sort == "score":
@@ -2568,33 +2489,76 @@ def import_datagouv():
         db.session.rollback()
         return jsonify({"error": str(e)[:300]}), 500
 
-# --- API: Tag chain vs independent -------------------------------------------
-@app.route("/api/prospects/tag-chains", methods=["POST"])
+# --- API: Detect franchises via recherche-entreprises.api.gouv.fr -------------
+@app.route("/api/enrich/franchises", methods=["POST"])
 @require_auth
-def tag_chains():
-    """Tag all prospects as chain or independent using name + domain + frequency."""
-    # Method 3: frequency-based detection
-    freq_chains = _detect_chain_batch()
+def detect_franchises():
+    """Check prospects against the official French business registry. Free API, no key needed."""
+    import requests as req
 
-    prospects = Prospect.query.all()
-    chains = 0
-    independents = 0
+    data = request.get_json() or {}
+    batch_size = min(_safe_int(data.get("batchSize", 10), 10), 20)
+
+    # Find prospects not yet checked
+    prospects = Prospect.query.filter(
+        Prospect.nom != "", Prospect.nom.isnot(None),
+        ~Prospect.notes.ilike("%franchise%"),
+        ~Prospect.notes.ilike("%independant%"),
+    ).limit(batch_size).all()
+
+    if not prospects:
+        return jsonify({"ok": True, "processed": 0, "franchises": 0, "independants": 0, "remaining": 0})
+
+    remaining = Prospect.query.filter(
+        Prospect.nom != "", Prospect.nom.isnot(None),
+        ~Prospect.notes.ilike("%franchise%"),
+        ~Prospect.notes.ilike("%independant%"),
+    ).count() - len(prospects)
+
+    results = {"processed": 0, "franchises": 0, "independants": 0, "remaining": remaining, "details": []}
+
     for p in prospects:
-        is_ch = _is_chain(p.nom, p.site_web or "")
-        # Also check frequency: same name in 3+ cities
-        if not is_ch and _normalize(p.nom) in freq_chains:
-            is_ch = True
-        # Update notes
-        notes = p.notes or ""
-        notes_clean = notes.replace("chaîne | ", "").replace("chaîne", "").strip(" |")
-        if is_ch:
-            p.notes = ("chaîne | " + notes_clean).strip(" |") if notes_clean else "chaîne"
-            chains += 1
-        else:
-            p.notes = notes_clean
-            independents += 1
+        try:
+            r = req.get("https://recherche-entreprises.api.gouv.fr/search",
+                       params={"q": p.nom, "page": 1, "per_page": 1,
+                               "commune": p.ville if p.ville else None},
+                       timeout=8)
+            if r.status_code != 200:
+                results["processed"] += 1
+                continue
+
+            data_resp = r.json()
+            entreprises = data_resp.get("results", [])
+
+            if not entreprises:
+                results["processed"] += 1
+                continue
+
+            e = entreprises[0]
+            nb_etab = e.get("nombre_etablissements", 1)
+            siren = e.get("siren", "")
+            siege = e.get("siege", {})
+            enseigne = e.get("nom_complet", "")
+
+            notes = p.notes or ""
+            notes_clean = notes.replace("franchise", "").replace("independant", "").replace(" | ", " ").strip()
+
+            if nb_etab >= 5:
+                tag = f"franchise ({nb_etab} etablissements)"
+                p.notes = (tag + " | " + notes_clean).strip(" |") if notes_clean else tag
+                results["franchises"] += 1
+                results["details"].append({"nom": p.nom, "type": "franchise", "etablissements": nb_etab, "enseigne": enseigne})
+            else:
+                tag = f"independant ({nb_etab} etablissement{'s' if nb_etab > 1 else ''})"
+                p.notes = (tag + " | " + notes_clean).strip(" |") if notes_clean else tag
+                results["independants"] += 1
+
+        except Exception:
+            pass
+        results["processed"] += 1
+
     db.session.commit()
-    return jsonify({"ok": True, "chains": chains, "independents": independents, "total": chains + independents})
+    return jsonify({"ok": True, **results})
 
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])

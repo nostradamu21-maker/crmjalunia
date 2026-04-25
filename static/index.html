@@ -374,7 +374,36 @@ function ProspectTable({onSelect}){
   const enrichAutoRef=useRef(false);
   const countdownRef=useRef(null);
   const[enrichStats,setEnrichStats]=useState(null);
-  const[phase,setPhase]=useState(1);
+  const[franSearching,setFranSearching]=useState(false);
+  const[franAuto,setFranAuto]=useState(false);
+  const[franTotal,setFranTotal]=useState({franchises:0,independants:0,processed:0});
+  const franAutoRef=useRef(false);
+  const franCountdownRef=useRef(null);
+  const[franCountdown,setFranCountdown]=useState(0);
+
+  const runOneFranchise=async()=>{
+    setFranSearching(true);setFranCountdown(0);
+    try{
+      const r=await api("/enrich/franchises",{method:"POST",body:JSON.stringify({batchSize:10})});
+      setFranTotal(prev=>({franchises:prev.franchises+(r.franchises||0),independants:prev.independants+(r.independants||0),processed:prev.processed+(r.processed||0)}));
+      load();
+      if(r.franchises>0)showToast("🏢",r.franchises+" franchises, "+r.independants+" independants — "+r.remaining+" restants","#ffe600");
+      else showToast("🏠",r.independants+" independants — "+r.remaining+" restants","#00ff88");
+      setFranSearching(false);
+      if(franAutoRef.current&&r.remaining>0){
+        setFranCountdown(3);let c=3;
+        franCountdownRef.current=setInterval(()=>{c--;setFranCountdown(c);if(c<=0){clearInterval(franCountdownRef.current);if(franAutoRef.current)runOneFranchise();}},1000);
+      }else if(r.remaining===0){franAutoRef.current=false;setFranAuto(false);showToast("✅","Detection terminee !","#00ff88");}
+    }catch(e){showToast("💀",e.message,"#ef4444");setFranSearching(false);
+      if(franAutoRef.current){setFranCountdown(5);let c=5;
+        franCountdownRef.current=setInterval(()=>{c--;setFranCountdown(c);if(c<=0){clearInterval(franCountdownRef.current);if(franAutoRef.current)runOneFranchise();}},1000);}
+    }
+  };
+  const toggleFranAuto=()=>{
+    if(franAuto){franAutoRef.current=false;setFranAuto(false);clearInterval(franCountdownRef.current);setFranCountdown(0);}
+    else{franAutoRef.current=true;setFranAuto(true);setFranTotal({franchises:0,independants:0,processed:0});runOneFranchise();}
+  };
+
   const[webSearching,setWebSearching]=useState(false);
   const[webSearchAuto,setWebSearchAuto]=useState(false);
   const[webTotal,setWebTotal]=useState({found:0,processed:0});
@@ -477,7 +506,7 @@ function ProspectTable({onSelect}){
       h("select",{value:fEmail,onChange:e=>{setFEmail(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
         h("option",{value:""},"Email: tous"),h("option",{value:"with"},"Avec email"),h("option",{value:"without"},"Sans email")),
       h("select",{value:fChain,onChange:e=>{setFChain(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
-        h("option",{value:""},"Tous"),h("option",{value:"independent"},"🏠 Independants"),h("option",{value:"chain"},"🏢 Chaines")),
+        h("option",{value:""},"Franchise: tous"),h("option",{value:"independent"},"🏠 Independants"),h("option",{value:"chain"},"🏢 Franchises")),
       h("button",{onClick:()=>{setSortScore(!sortScore);setPage(1);},
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(sortScore?"border-neon text-neon":"border-gray-700 text-gray-400 hover:border-gray-500")},
         sortScore?"🔥 Score ↓":"🔥 Score"),
@@ -497,6 +526,9 @@ function ProspectTable({onSelect}){
         setCleaning(false);
       },disabled:cleaning,className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
         cleaning?"Scan...":"🗑️ Nettoyer faux"),
+      h("button",{onClick:toggleFranAuto,
+        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(franAuto?"border-red-500/40 text-red-400":"border-yellow-500/40 text-yellow-400 hover:border-yellow-400")+(franSearching?" animate-pulse":"")},
+        franAuto?(franSearching?"🏢 Detection...":(franCountdown>0?"⏳ "+franCountdown+"s":"🏢 En cours...")):"🏢 Franchises"),
       h("button",{onClick:toggleWebAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(webSearchAuto?"border-red-500/40 text-red-400":"border-cyan-500/40 text-cyan-400 hover:border-cyan-400")+(webSearching?" animate-pulse":"")},
         webSearchAuto?(webSearching?"🌐 Recherche sites...":(webCountdown>0?"⏳ "+webCountdown+"s":"🌐 En cours...")):"🌐 Phase 1: Sites web"),
