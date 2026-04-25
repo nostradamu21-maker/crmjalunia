@@ -2740,21 +2740,15 @@ def datatourisme_import():
     page = _safe_int(data.get("page", 1), 1)
     page_size = min(_safe_int(data.get("page_size", 100), 100), 250)
     dept = data.get("departement", "").strip()
-    next_url = data.get("nextUrl", "")
 
     headers = {"X-API-Key": api_key, "Accept": "application/json"}
 
     try:
-        if next_url:
-            # Follow the "next" link from previous response
-            sep = "&" if "?" in next_url else "?"
-            r = req.get(next_url + sep + "api_key=" + api_key, timeout=30)
-        else:
-            params = {
-                "page": page, "page_size": page_size, "lang": "fr",
-                "fields": "uuid,label,type,hasContact,isLocatedAt",
-            }
-            filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation'
+        params = {
+            "page": page, "page_size": page_size, "lang": "fr",
+            "fields": "uuid,label,type,hasContact,isLocatedAt",
+        }
+        filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation'
             if dept:
                 filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
             params["filters"] = filters
@@ -2876,8 +2870,7 @@ def datatourisme_import():
             db.session.add_all(batch)
             db.session.commit()
 
-        stats["hasMore"] = meta.get("next") is not None
-        stats["nextUrl"] = meta.get("next", "")
+        stats["hasMore"] = page < meta.get("total_pages", 0)
         return jsonify({"ok": True, **stats})
 
     except Exception as e:
