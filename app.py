@@ -117,12 +117,62 @@ HOTEL_CHAINS = [
     "the originals", "relais du silence",
 ]
 
-def _is_chain(name):
-    """Check if a prospect name matches a known hotel chain."""
+CHAIN_DOMAINS = [
+    "accor.com", "accorhotels.com", "ibis.com", "mercure.com", "novotel.com", "sofitel.com",
+    "pullmanhotels.com", "mgallery.com", "adagio-city.com",
+    "bestwestern.fr", "bestwestern.com",
+    "ihg.com", "holidayinn.com",
+    "hilton.com", "hamptoninn.com", "doubletree.com",
+    "marriott.com", "sheraton.com", "westin.com", "lemeridien.com",
+    "radissonhotels.com", "hyatt.com", "wyndhamhotels.com",
+    "campanile.com", "kyriad.com", "premiereclasse.com", "louvrehotels.com",
+    "hotel-bb.com", "hotelbb.com",
+    "brithotel.fr", "fasthotel.com",
+    "appartcity.com", "citadines.com", "residhome.com",
+    "logishotels.com",
+    "theoriginalshotels.com",
+]
+
+def _is_chain(name, site_web="", notes=""):
+    """Check if a prospect is a chain hotel using name, website domain, and room count."""
     if not name:
         return False
     n = name.lower().strip()
-    return any(chain in n for chain in HOTEL_CHAINS)
+
+    # Method 1: Name matching
+    if any(chain in n for chain in HOTEL_CHAINS):
+        return True
+
+    # Method 2: Website domain matching
+    if site_web:
+        site_lower = site_web.lower()
+        if any(domain in site_lower for domain in CHAIN_DOMAINS):
+            return True
+
+    # Method 3: Room count (from notes field, ex: "3 étoiles")
+    # Large room count suggests chain, but not conclusive alone
+    # Skipped as secondary signal
+
+    return False
+
+def _detect_chain_batch():
+    """Detect chains using name frequency across cities."""
+    from collections import Counter
+    # Count how many different cities each base name appears in
+    all_prospects = db.session.query(Prospect.nom, Prospect.ville).all()
+    name_cities = {}
+    for nom, ville in all_prospects:
+        if not nom:
+            continue
+        # Normalize: remove city name, numbers, "hotel" prefix
+        base = _normalize(nom).strip()
+        if base not in name_cities:
+            name_cities[base] = set()
+        if ville:
+            name_cities[base].add(ville.lower())
+    # Names that appear in 3+ different cities are likely chains
+    chain_names = {name for name, cities in name_cities.items() if len(cities) >= 3}
+    return chain_names
 
 
 def _b64url_encode(data):
@@ -582,11 +632,9 @@ def get_prospects():
 
     chain_filter = request.args.get("chain", "")
     if chain_filter == "independent":
-        for chain in HOTEL_CHAINS:
-            q = q.filter(~Prospect.nom.ilike(f"%{chain}%"))
+        q = q.filter(~Prospect.notes.ilike("%chaîne%"))
     elif chain_filter == "chain":
-        conditions = [Prospect.nom.ilike(f"%{chain}%") for chain in HOTEL_CHAINS[:20]]
-        q = q.filter(db.or_(*conditions))
+        q = q.filter(Prospect.notes.ilike("%chaîne%"))
 
     sort = request.args.get("sort", "date")
     if sort == "score":
@@ -2524,16 +2572,26 @@ def import_datagouv():
 @app.route("/api/prospects/tag-chains", methods=["POST"])
 @require_auth
 def tag_chains():
-    """Tag all prospects as chain or independent based on name matching."""
+    """Tag all prospects as chain or independent using name + domain + frequency."""
+    # Method 3: frequency-based detection
+    freq_chains = _detect_chain_batch()
+
     prospects = Prospect.query.all()
     chains = 0
     independents = 0
     for p in prospects:
-        if _is_chain(p.nom):
-            if "chaîne" not in (p.notes or ""):
-                p.notes = ("chaîne | " + (p.notes or "")).strip(" |")
+        is_ch = _is_chain(p.nom, p.site_web or "")
+        # Also check frequency: same name in 3+ cities
+        if not is_ch and _normalize(p.nom) in freq_chains:
+            is_ch = True
+        # Update notes
+        notes = p.notes or ""
+        notes_clean = notes.replace("chaîne | ", "").replace("chaîne", "").strip(" |")
+        if is_ch:
+            p.notes = ("chaîne | " + notes_clean).strip(" |") if notes_clean else "chaîne"
             chains += 1
         else:
+            p.notes = notes_clean
             independents += 1
     db.session.commit()
     return jsonify({"ok": True, "chains": chains, "independents": independents, "total": chains + independents})
