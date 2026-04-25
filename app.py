@@ -1366,6 +1366,8 @@ def scrape_search():
     api_key = Setting.get("google_places_api_key", "")
     if not api_key:
         return jsonify({"error": "Cle API Google Places non configuree. Allez dans Parametres."}), 400
+    if not _check_api_budget():
+        return jsonify({"error": "Budget API atteint ($195/$200). Stop.", "budgetExceeded": True}), 400
 
     data = request.get_json() or {}
     query = data.get("query", "").strip()
@@ -1472,6 +1474,20 @@ def _track_api_call(n=1):
     current = _safe_int(Setting.get(key, "0"), 0)
     Setting.set(key, str(current + n))
 
+def _check_api_budget():
+    """Returns True if we're still within the free $200 budget. Raises error if over."""
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    month_calls = 0
+    for i in range(31):
+        d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+        if not d.startswith(month):
+            break
+        month_calls += _safe_int(Setting.get(f"api_calls_{d}", "0"), 0)
+    cost = month_calls * 0.032
+    if cost >= 195:
+        return False
+    return True
+
 @app.route("/api/scrape/deep", methods=["POST"])
 @require_auth
 def scrape_deep():
@@ -1479,6 +1495,8 @@ def scrape_deep():
     import requests as req
 
     api_key = Setting.get("google_places_api_key", "")
+    if not _check_api_budget():
+        return jsonify({"error": "Budget API atteint ($195/$200). Stop.", "budgetExceeded": True}), 400
     if not api_key:
         return jsonify({"error": "Cle API Google Places non configuree"}), 400
 
@@ -1591,6 +1609,8 @@ def scrape_deep():
 def scrape_details():
     """Get place details (website, phone) from Google Places."""
     import requests as req
+    if not _check_api_budget():
+        return jsonify({"error": "Budget API atteint ($195/$200). Stop.", "budgetExceeded": True}), 400
 
     api_key = Setting.get("google_places_api_key", "")
     if not api_key:
@@ -1995,6 +2015,9 @@ def enrich_websites():
     api_key = Setting.get("google_places_api_key", "")
     if not api_key:
         return jsonify({"error": "Cle API Google Places non configuree"}), 400
+
+    if not _check_api_budget():
+        return jsonify({"error": "Budget API atteint ($195/$200). Arretez pour ne pas payer.", "budgetExceeded": True}), 400
 
     data = request.get_json() or {}
     batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)

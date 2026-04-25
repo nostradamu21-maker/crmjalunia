@@ -389,12 +389,15 @@ function ProspectTable({onSelect}){
       api("/enrich/stats").then(setEnrichStats).catch(()=>{});refreshUsage&&refreshUsage();
       if(r.found>0)showToast("🌐",r.found+" sites trouves ("+r.apiCalls+" appels API) — "+r.remaining+" restants","#00f0ff");
       else showToast("🔍","0 site ce lot — "+r.remaining+" restants","#64748b");
+      load();
       setWebSearching(false);
       if(webAutoRef.current&&r.remaining>0){
         setWebCountdown(8);let c=8;
         webCountdownRef.current=setInterval(()=>{c--;setWebCountdown(c);if(c<=0){clearInterval(webCountdownRef.current);if(webAutoRef.current)runOneWebSearch();}},1000);
       }else if(r.remaining===0){webAutoRef.current=false;setWebSearchAuto(false);showToast("✅","Phase 1 terminee ! Lancez Phase 2","#00ff88");}
-    }catch(e){showToast("💀",e.message,"#ef4444");setWebSearching(false);
+    }catch(e){
+      showToast("💀",e.message,"#ef4444");setWebSearching(false);
+      if(e.message&&e.message.includes("Budget")){webAutoRef.current=false;setWebSearchAuto(false);showToast("🛑","STOP — Budget API atteint !","#ef4444");return;}
       if(webAutoRef.current){setWebCountdown(10);let c=10;
         webCountdownRef.current=setInterval(()=>{c--;setWebCountdown(c);if(c<=0){clearInterval(webCountdownRef.current);if(webAutoRef.current)runOneWebSearch();}},1000);}
     }
