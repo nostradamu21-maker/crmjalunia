@@ -787,15 +787,20 @@ function ScrapingView(){
     setSearching(true);setImportResult(null);
     if(pageToken){showToast("⏳","Chargement page suivante...","#00f0ff");await new Promise(r=>setTimeout(r,2500));}
     try{const r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location,nextPageToken:pageToken||""})});
-      if(pageToken)setResults(prev=>[...prev,...r.results]);else setResults(r.results);
+      const allResults=pageToken?[...results,...r.results]:r.results;
+      setResults(allResults);
+      // Auto-select only new (non-duplicate) results
+      const newSelected=new Set();
+      allResults.forEach((item,i)=>{if(!item.duplicate)newSelected.add(i);});
+      setSelected(newSelected);
       setNextPage(r.nextPageToken||null);setStep("results");
-      showToast("🔍",r.total+" nouveaux"+(r.skipped?" ("+r.skipped+" deja en base)":""),"#00f0ff");
+      showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
     }catch(e){showToast("💀",e.message,"#ef4444");}
     setSearching(false);
   };
 
-  const toggleAll=()=>{if(selected.size===results.length)setSelected(new Set());else setSelected(new Set(results.map((_,i)=>i)));};
-  const toggle=i=>{const s=new Set(selected);if(s.has(i))s.delete(i);else s.add(i);setSelected(s);};
+  const toggleAll=()=>{if(selected.size>0)setSelected(new Set());else{const s=new Set();results.forEach((r,i)=>{if(!r.duplicate)s.add(i);});setSelected(s);}};
+  const toggle=i=>{if(results[i].duplicate)return;const s=new Set(selected);if(s.has(i))s.delete(i);else s.add(i);setSelected(s);};
 
   const getDetails=async()=>{
     setDetailing(true);
@@ -849,10 +854,12 @@ function ScrapingView(){
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},
       h("div",{className:"flex items-center justify-between mb-4"},
-        h("h3",{className:"font-semibold text-white"},results.length+" resultats"),
+        h("div",null,
+          h("h3",{className:"font-semibold text-white inline"},results.filter(r=>!r.duplicate).length+" nouveaux"),
+          results.some(r=>r.duplicate)?h("span",{className:"text-xs text-gray-500 ml-2"},results.filter(r=>r.duplicate).length+" deja en base"):null),
         h("div",{className:"flex gap-2"},
           h("button",{onClick:toggleAll,className:"px-3 py-1.5 border border-gray-700 rounded-lg text-xs text-gray-400 hover:border-neon"},
-            selected.size===results.length?"Tout deselectionner":"Tout selectionner"),
+            selected.size>0?"Tout deselectionner":"Selectionner nouveaux"),
           h("button",{onClick:getDetails,disabled:selected.size===0||detailing,
             className:"px-4 py-1.5 text-white rounded-lg text-xs font-bold disabled:opacity-40",
             style:{background:"linear-gradient(135deg,#00f0ff,#a855f7)"}},
@@ -860,12 +867,13 @@ function ScrapingView(){
       h("div",{className:"space-y-2 max-h-96 overflow-y-auto"},
         results.map((r,i)=>h("div",{key:i,className:"flex items-center gap-3 p-3 rounded-lg hover:bg-gray-800/50 cursor-pointer "+(selected.has(i)?"bg-gray-800/30 border border-neon/20":""),
           onClick:()=>toggle(i)},
-          h("input",{type:"checkbox",checked:selected.has(i),readOnly:true,className:"accent-cyan-400"}),
+          h("input",{type:"checkbox",checked:selected.has(i),readOnly:true,disabled:r.duplicate,className:"accent-cyan-400"}),
           h("div",{className:"flex-1 min-w-0"},
-            h("div",{className:"text-sm font-medium text-white truncate"},r.nom),
+            h("div",{className:"text-sm font-medium truncate "+(r.duplicate?"text-gray-600 line-through":"text-white")},r.nom),
             h("div",{className:"text-xs text-gray-500 truncate"},r.adresse)),
-          r.note?h("span",{className:"text-xs text-neonYellow"},"⭐ "+r.note):null,
-          r.avis?h("span",{className:"text-xs text-gray-500"},r.avis+" avis"):null))),
+          r.duplicate?h("span",{className:"text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-500"},"deja en base"):null,
+          !r.duplicate&&r.note?h("span",{className:"text-xs text-neonYellow"},"⭐ "+r.note):null,
+          !r.duplicate&&r.avis?h("span",{className:"text-xs text-gray-500"},r.avis+" avis"):null))),
       nextPage?h("button",{onClick:()=>search(nextPage),disabled:searching,
         className:"mt-3 w-full py-2 border border-gray-700 rounded-lg text-sm text-gray-400 hover:border-neon"},
         searching?"Chargement...":"Charger plus de resultats"):null):null,

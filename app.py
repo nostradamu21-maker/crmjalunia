@@ -1379,33 +1379,40 @@ def scrape_search():
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             return jsonify({"error": f"Google API: {data.get('status')} — {data.get('error_message', '')}"}), 400
 
-        # Load existing prospect names for dedup
+        # Load existing prospect names + addresses for dedup
         existing_names = set()
         for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
             existing_names.add(row[0])
+        existing_addresses = set()
+        for row in db.session.execute(db.text("SELECT lower(adresse) FROM prospects WHERE adresse IS NOT NULL AND adresse != ''")):
+            existing_addresses.add(row[0])
 
         results = []
         skipped = 0
         for place in data.get("results", []):
             name = place.get("name", "")
-            if name.lower() in existing_names:
-                skipped += 1
-                continue
+            addr = place.get("formatted_address", "")
+            is_dup = name.lower() in existing_names or (addr and addr.lower() in existing_addresses)
             results.append({
                 "placeId": place.get("place_id", ""),
                 "nom": name,
-                "adresse": place.get("formatted_address", ""),
+                "adresse": addr,
                 "note": place.get("rating", 0),
                 "avis": place.get("user_ratings_total", 0),
                 "types": place.get("types", []),
                 "lat": place.get("geometry", {}).get("location", {}).get("lat"),
                 "lng": place.get("geometry", {}).get("location", {}).get("lng"),
+                "duplicate": is_dup,
             })
+
+        new_count = sum(1 for r in results if not r.get("duplicate"))
+        dup_count = sum(1 for r in results if r.get("duplicate"))
 
         return jsonify({
             "results": results,
             "total": len(results),
-            "skipped": skipped,
+            "new": new_count,
+            "duplicates": dup_count,
             "nextPageToken": data.get("next_page_token"),
         })
 
