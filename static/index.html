@@ -800,7 +800,7 @@ function ScrapingView(){
       if(deepMode&&location){
         showToast("🔍","Recherche approfondie en cours (9 secteurs)...","#a855f7");
         r=await api("/scrape/deep",{method:"POST",body:JSON.stringify({query,city:location,radius})});
-        showToast("🔍",r.total+" trouves ("+r.new+" nouveaux, "+r.apiCalls+" appels API)","#00f0ff");
+        showToast("🔍",r.new+" nouveaux / "+r.total+" trouves ("+r.apiCalls+" appels API, "+r.keywords+" categories)","#00f0ff");
       }else{
         r=await api("/scrape/search",{method:"POST",body:JSON.stringify({query,location})});
         showToast("🔍",r.new+" nouveaux"+(r.duplicates?" — "+r.duplicates+" deja en base":""),"#00f0ff");
@@ -881,10 +881,10 @@ function ScrapingView(){
       h("div",{className:"flex items-center justify-between"},
         h("label",{className:"flex items-center gap-2 cursor-pointer"},
           h("input",{type:"checkbox",checked:deepMode,onChange:e=>setDeepMode(e.target.checked),className:"w-4 h-4 accent-purple-400"}),
-          h("span",{className:"text-xs text-gray-400"},"Recherche approfondie"),
+          h("span",{className:"text-xs text-gray-400"},"Scan complet"),
           h("span",{className:"text-xs px-2 py-0.5 rounded-full "+(deepMode?"bg-purple-500/20 text-purple-400":"bg-gray-800 text-gray-600")},
-            deepMode?"9 secteurs — jusqu'a 180 resultats":"Max 20 resultats")),
-        h("span",{className:"text-xs text-gray-600"},deepMode?"Decoupe la zone en 9 secteurs et cherche dans chacun":"Multi-villes: separez par des virgules"))),
+            deepMode?"8 categories x 9 secteurs":"Recherche simple")),
+        h("span",{className:"text-xs text-gray-600"},deepMode?"Cherche gite, chambre d'hotes, hebergement, location vacances... dans toute la zone":"Multi-villes: separez par des virgules"))),
 
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},

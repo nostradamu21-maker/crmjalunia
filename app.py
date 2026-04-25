@@ -1507,6 +1507,14 @@ def scrape_deep():
 
     radius_km = min(_safe_int(data.get("radius", 15), 15), 50)
 
+    # Multi-category keywords for accommodation
+    ACCOMMODATION_KEYWORDS = [
+        "gîte", "chambre d'hôtes", "hébergement", "location vacances",
+        "meublé tourisme", "appart hotel", "maison hôtes", "lodge",
+    ]
+    multi = data.get("multi", True)
+    keywords = ACCOMMODATION_KEYWORDS if multi else [query]
+
     # Built-in French city coordinates (fallback if Geocoding API not enabled)
     FRENCH_CITIES = {
         "paris":(48.8566,2.3522),"marseille":(43.2965,5.3698),"lyon":(45.7640,4.8357),
@@ -1569,16 +1577,17 @@ def scrape_deep():
         for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
             existing_names.add(row[0])
 
-        # Step 4: Search each grid point
+        # Step 4: Search each keyword x grid point
         seen_place_ids = set()
         all_results = []
         api_calls = 0
 
-        for lat, lng in grid_points:
+        for kw in keywords:
+          for lat, lng in grid_points:
             params = {
                 "location": f"{lat},{lng}",
                 "radius": radius_km * 1000 // 3,
-                "keyword": query,
+                "keyword": kw,
                 "key": api_key,
                 "language": "fr",
             }
@@ -1623,6 +1632,7 @@ def scrape_deep():
             "duplicates": dup_count,
             "apiCalls": api_calls,
             "gridPoints": len(grid_points),
+            "keywords": len(keywords),
             "center": {"lat": center_lat, "lng": center_lng},
         })
 
