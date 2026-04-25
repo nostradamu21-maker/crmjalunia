@@ -374,6 +374,30 @@ function ProspectTable({onSelect}){
   const enrichAutoRef=useRef(false);
   const countdownRef=useRef(null);
   const[enrichStats,setEnrichStats]=useState(null);
+  const[hunterAuto,setHunterAuto]=useState(false);
+  const[hunterTotal,setHunterTotal]=useState({found:0,credits:0});
+  const hunterAutoRef=useRef(false);
+  const hunterCountdownRef=useRef(null);
+  const[hunterCountdown,setHunterCountdown]=useState(0);
+
+  const runOneHunter=async()=>{
+    try{const r=await api("/enrich/hunter",{method:"POST",body:JSON.stringify({batchSize:5})});
+      setHunterTotal(prev=>({found:prev.found+(r.found||0),credits:prev.credits+(r.creditsUsed||0)}));
+      load();api("/enrich/stats").then(setEnrichStats).catch(()=>{});
+      if(r.found>0)showToast("📧","Hunter: "+r.found+" emails ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#00ff88");
+      else showToast("🔎","0 email ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#64748b");
+      if(r.error||r.remaining===0){hunterAutoRef.current=false;setHunterAuto(false);
+        showToast("🛑",r.error||"Termine !","#ffe600");return;}
+      if(hunterAutoRef.current){
+        setHunterCountdown(2);let c=2;
+        hunterCountdownRef.current=setInterval(()=>{c--;setHunterCountdown(c);if(c<=0){clearInterval(hunterCountdownRef.current);if(hunterAutoRef.current)runOneHunter();}},1000);}
+    }catch(e){showToast("💀",e.message,"#ef4444");hunterAutoRef.current=false;setHunterAuto(false);}
+  };
+  const toggleHunterAuto=()=>{
+    if(hunterAuto){hunterAutoRef.current=false;setHunterAuto(false);clearInterval(hunterCountdownRef.current);setHunterCountdown(0);}
+    else{hunterAutoRef.current=true;setHunterAuto(true);setHunterTotal({found:0,credits:0});runOneHunter();}
+  };
+
   const[franSearching,setFranSearching]=useState(false);
   const[franAuto,setFranAuto]=useState(false);
   const[franTotal,setFranTotal]=useState({franchises:0,independants:0,processed:0});
@@ -526,16 +550,9 @@ function ProspectTable({onSelect}){
         setCleaning(false);
       },disabled:cleaning,className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
         cleaning?"Scan...":"🗑️ Nettoyer faux"),
-      h("button",{onClick:async()=>{
-        showToast("🔎","Hunter.io en cours...","#a855f7");
-        try{const r=await api("/enrich/hunter",{method:"POST",body:JSON.stringify({batchSize:5})});
-          if(r.found>0)showToast("📧","Hunter: "+r.found+" emails trouves ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#00ff88");
-          else showToast("🔎","Hunter: 0 email ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#64748b");
-          if(r.error)showToast("⚠️",r.error,"#ffe600");
-          load();api("/enrich/stats").then(setEnrichStats).catch(()=>{});
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-      },className:"px-3 py-2.5 border border-orange-500/40 rounded-xl text-sm font-bold text-orange-400 hover:border-orange-400"},
-        "🔎 Hunter.io"),
+      h("button",{onClick:toggleHunterAuto,
+        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(hunterAuto?"border-red-500/40 text-red-400":"border-orange-500/40 text-orange-400 hover:border-orange-400")},
+        hunterAuto?(hunterCountdown>0?"⏳ "+hunterCountdown+"s":"🔎 En cours..."):"🔎 Hunter.io"+(hunterTotal.credits>0?" ("+hunterTotal.credits+" credits)":"")),
       h("button",{onClick:toggleFranAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(franAuto?"border-red-500/40 text-red-400":"border-yellow-500/40 text-yellow-400 hover:border-yellow-400")+(franSearching?" animate-pulse":"")},
         franAuto?(franSearching?"🏢 Detection...":(franCountdown>0?"⏳ "+franCountdown+"s":"🏢 En cours...")):"🏢 Franchises"),

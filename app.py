@@ -2243,6 +2243,7 @@ def enrich_hunter():
     prospects = Prospect.query.filter(
         Prospect.site_web != "", Prospect.site_web.isnot(None),
         db.or_(Prospect.email == "", Prospect.email.is_(None)),
+        ~Prospect.notes.ilike("%hunter:done%"),
     ).limit(batch_size).all()
 
     if not prospects:
@@ -2251,6 +2252,7 @@ def enrich_hunter():
     remaining = Prospect.query.filter(
         Prospect.site_web != "", Prospect.site_web.isnot(None),
         db.or_(Prospect.email == "", Prospect.email.is_(None)),
+        ~Prospect.notes.ilike("%hunter:done%"),
     ).count() - len(prospects)
 
     results = {"processed": 0, "found": 0, "remaining": remaining, "details": [], "creditsUsed": 0}
@@ -2296,6 +2298,10 @@ def enrich_hunter():
 
         except Exception:
             pass
+        # Tag as checked so we don't waste credits on re-runs
+        notes = p.notes or ""
+        if "hunter:done" not in notes:
+            p.notes = (notes + " | hunter:done").strip(" |")
         results["processed"] += 1
 
     db.session.commit()
