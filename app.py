@@ -2529,7 +2529,7 @@ def import_datagouv():
                 continue
 
             nom = _get(item, "NOM COMMERCIAL", "NOM_COMMERCIAL", "nom_commercial",
-                       "Nom commercial", "nom", "Nom", "name", "Name",
+                       "Nom commercial", "nomoffre", "nom", "Nom", "name", "Name",
                        "RAISON_SOCIALE", "raison_sociale", "DENOMINATION",
                        "rdfs:label", "schema:name")
             if not nom:
@@ -2544,27 +2544,29 @@ def import_datagouv():
             ville = _get(item, "COMMUNE", "commune", "Commune", "ville", "Ville",
                          "city", "City", "schema:addressLocality")[:100]
             cp = _get(item, "CODE POSTAL", "CODE_POSTAL", "code_postal", "Code postal",
-                      "CP", "cp", "schema:postalCode")[:10]
+                      "codepostal", "CP", "cp", "schema:postalCode")[:10]
             adresse = _get(item, "ADRESSE", "adresse", "Adresse", "address",
-                           "schema:streetAddress")[:300]
+                           "adresse1", "adresse2", "schema:streetAddress")[:300]
             site = _get(item, "SITE INTERNET", "SITE_INTERNET", "site_internet",
                         "Site Internet", "site_web", "site", "website", "URL",
-                        "url", "schema:url", "SITEWEB")[:300]
+                        "url", "commweb", "schema:url", "SITEWEB")[:300]
             type_ = _get(item, "TYPOLOGIE ÉTABLISSEMENT", "TYPOLOGIE_ETABLISSEMENT",
-                         "type", "Type", "CATEGORIE", "categorie", "category",
-                         "TYPE_HEBERGEMENT", "classement")[:80]
-            email = _get(item, "email", "Email", "COURRIEL", "courriel",
+                         "type", "Type", "typehabitation", "CATEGORIE", "categorie",
+                         "category", "TYPE_HEBERGEMENT", "classement")[:80]
+            email = _get(item, "email", "Email", "COURRIEL", "courriel", "commmail",
                          "schema:email", "mail", "MAIL")[:200].lower()
-            tel = _get(item, "telephone", "Telephone", "TEL", "tel",
-                       "schema:telephone", "phone", "TELEPHONE")[:30]
-            classement = _get(item, "CLASSEMENT", "classement")
+            tel = _get(item, "telephone", "Telephone", "TEL", "tel", "commtel",
+                       "commmob", "schema:telephone", "phone", "TELEPHONE")[:30]
+            classement = _get(item, "CLASSEMENT", "classement", "categorie",
+                              "labelsclassement")
+            departement = _get(item, "departement", "DEP", "DEPARTEMENT")
             region = (cp + " " + ville).strip() if cp else ville
 
             p = Prospect(
                 nom=nom, type=type_ or "hebergement", ville=ville, region=region[:100],
                 email=email, telephone=tel, site_web=site,
                 adresse=adresse, status="new",
-                notes=classement,
+                notes=(" | ".join(filter(None, [classement, departement]))),
                 unsubscribe_token=secrets.token_urlsafe(32),
             )
             _calculate_score(p)
