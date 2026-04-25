@@ -2166,6 +2166,12 @@ def import_datagouv():
         if not prospects_data:
             return jsonify({"error": "Aucune donnee trouvee dans le fichier"}), 400
 
+        # Debug mode: return sample data to see columns
+        if data.get("debug"):
+            sample = prospects_data[:3] if prospects_data else []
+            columns = list(sample[0].keys()) if sample and isinstance(sample[0], dict) else []
+            return jsonify({"ok": True, "debug": True, "columns": columns, "sample": sample, "total": len(prospects_data)})
+
         # Smart field mapping for various data.gouv.fr formats
         stats = {"imported": 0, "skipped": 0, "errors": 0, "total": len(prospects_data)}
 

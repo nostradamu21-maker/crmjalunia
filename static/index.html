@@ -941,7 +941,16 @@ function ScrapingView(){
             if(r.imported>50)launchConfetti();
           }catch(e){showToast("💀",e.message,"#ef4444");}
         },className:"px-5 py-2.5 text-white rounded-lg text-sm font-bold",
-          style:{background:"linear-gradient(135deg,#0055a4,#ef4444)"}},"🇫🇷 Importer"))),
+          style:{background:"linear-gradient(135deg,#0055a4,#ef4444)"}},"🇫🇷 Importer"),
+        h("button",{onClick:async()=>{
+          const url=document.getElementById("datagouv-url").value;
+          if(!url){showToast("💀","Collez une URL","#ef4444");return;}
+          showToast("⏳","Analyse du fichier...","#a855f7");
+          try{const r=await api("/import/datagouv",{method:"POST",body:JSON.stringify({url,debug:true})});
+            if(r.columns)showToast("📋","Colonnes: "+r.columns.join(", "),"#00f0ff");
+            console.log("DEBUG datagouv:",r);alert("Colonnes trouvees: "+r.columns.join(", ")+"\n\nTotal lignes: "+r.total+"\n\nExemple:\n"+JSON.stringify(r.sample[0],null,2));
+          }catch(e){showToast("💀",e.message,"#ef4444");}
+        },className:"px-4 py-2 border border-gray-700 rounded-lg text-xs text-gray-400 hover:border-neon"},"🔍 Voir colonnes"))),
 
     // Results
     results.length>0&&step==="results"?h("div",{className:"card-dark p-6"},
