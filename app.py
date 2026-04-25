@@ -2103,15 +2103,30 @@ def import_datagouv():
     url = data.get("url", "").strip()
     dept = data.get("departement", "").strip()
 
-    # Preset datasets
-    PRESETS = {
-        "hebergements": "https://diffuseur.datatourisme.fr/webservice/7702f010-2a49-4622-aa9b-e1e8a72e4f2b/c56e2be5-3527-4020-a4a7-04e6b72a1510",
-        "meuble_tourisme": "https://www.data.gouv.fr/fr/datasets/r/fad8ebe4-6004-4a79-a4d4-d23e6b9bca59",
-    }
-
-    preset = data.get("preset", "")
-    if preset and preset in PRESETS:
-        url = PRESETS[preset]
+    # Auto-convert data.gouv.fr page URLs to direct download URLs
+    if "data.gouv.fr" in url and "resource_id=" in url:
+        import urllib.parse
+        parsed_url = urllib.parse.urlparse(url)
+        params = urllib.parse.parse_qs(parsed_url.query)
+        rid = params.get("resource_id", [""])[0]
+        if rid:
+            url = f"https://www.data.gouv.fr/fr/datasets/r/{rid}"
+    elif "data.gouv.fr/datasets/" in url and "/r/" not in url:
+        # It's a dataset page URL, not a resource URL — try to get the first CSV resource
+        import requests as req2
+        try:
+            # Extract dataset slug
+            slug = url.split("/datasets/")[-1].split("?")[0].split("/")[0].strip("/")
+            api_url = f"https://www.data.gouv.fr/api/1/datasets/{slug}/"
+            r = req2.get(api_url, timeout=10)
+            if r.status_code == 200:
+                ds = r.json()
+                for res in ds.get("resources", []):
+                    if res.get("format", "").lower() in ("csv", "json"):
+                        url = res["url"]
+                        break
+        except Exception:
+            pass
 
     if not url:
         return jsonify({"error": "URL requise"}), 400
