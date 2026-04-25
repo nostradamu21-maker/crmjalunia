@@ -2225,6 +2225,82 @@ def enrich():
     db.session.commit()
     return jsonify({"ok": True, **results})
 
+# --- API: Hunter.io email finder (free credits first) -------------------------
+@app.route("/api/enrich/hunter", methods=["POST"])
+@require_auth
+def enrich_hunter():
+    """Find emails using Hunter.io API. Uses free credits (25 searches/month)."""
+    import requests as req
+    from urllib.parse import urlparse
+
+    hunter_key = Setting.get("hunter_api_key", "")
+    if not hunter_key:
+        return jsonify({"error": "Cle Hunter.io non configuree. Allez dans Config."}), 400
+
+    data = request.get_json() or {}
+    batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)
+
+    prospects = Prospect.query.filter(
+        Prospect.site_web != "", Prospect.site_web.isnot(None),
+        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+    ).limit(batch_size).all()
+
+    if not prospects:
+        return jsonify({"ok": True, "processed": 0, "found": 0, "remaining": 0})
+
+    remaining = Prospect.query.filter(
+        Prospect.site_web != "", Prospect.site_web.isnot(None),
+        db.or_(Prospect.email == "", Prospect.email.is_(None)),
+    ).count() - len(prospects)
+
+    results = {"processed": 0, "found": 0, "remaining": remaining, "details": [], "creditsUsed": 0}
+
+    for p in prospects:
+        domain = urlparse(p.site_web).netloc.replace("www.", "")
+        if not domain:
+            results["processed"] += 1
+            continue
+
+        try:
+            r = req.get("https://api.hunter.io/v2/domain-search",
+                       params={"domain": domain, "api_key": hunter_key}, timeout=10)
+            results["creditsUsed"] += 1
+
+            if r.status_code == 429:
+                results["error"] = "Limite Hunter.io atteinte ce mois"
+                break
+            if r.status_code != 200:
+                results["processed"] += 1
+                continue
+
+            data_resp = r.json().get("data", {})
+            emails = data_resp.get("emails", [])
+
+            if emails:
+                best = ""
+                for prefix in ["contact", "info", "hello", "accueil", "reservation", "booking", "direction"]:
+                    for em in emails:
+                        if em.get("value", "").startswith(prefix + "@"):
+                            best = em["value"]
+                            break
+                    if best:
+                        break
+                if not best:
+                    best = emails[0].get("value", "")
+
+                if best and _is_valid_email(best):
+                    p.email = best[:200]
+                    _calculate_score(p)
+                    results["found"] += 1
+                    results["details"].append({"nom": p.nom, "email": best, "domain": domain})
+
+        except Exception:
+            pass
+        results["processed"] += 1
+
+    db.session.commit()
+    return jsonify({"ok": True, **results})
+
 # Keep old endpoint as alias
 @app.route("/api/enrich-emails", methods=["POST"])
 @require_auth

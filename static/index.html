@@ -526,6 +526,16 @@ function ProspectTable({onSelect}){
         setCleaning(false);
       },disabled:cleaning,className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
         cleaning?"Scan...":"🗑️ Nettoyer faux"),
+      h("button",{onClick:async()=>{
+        showToast("🔎","Hunter.io en cours...","#a855f7");
+        try{const r=await api("/enrich/hunter",{method:"POST",body:JSON.stringify({batchSize:5})});
+          if(r.found>0)showToast("📧","Hunter: "+r.found+" emails trouves ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#00ff88");
+          else showToast("🔎","Hunter: 0 email ("+r.creditsUsed+" credits) — "+r.remaining+" restants","#64748b");
+          if(r.error)showToast("⚠️",r.error,"#ffe600");
+          load();api("/enrich/stats").then(setEnrichStats).catch(()=>{});
+        }catch(e){showToast("💀",e.message,"#ef4444");}
+      },className:"px-3 py-2.5 border border-orange-500/40 rounded-xl text-sm font-bold text-orange-400 hover:border-orange-400"},
+        "🔎 Hunter.io"),
       h("button",{onClick:toggleFranAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(franAuto?"border-red-500/40 text-red-400":"border-yellow-500/40 text-yellow-400 hover:border-yellow-400")+(franSearching?" animate-pulse":"")},
         franAuto?(franSearching?"🏢 Detection...":(franCountdown>0?"⏳ "+franCountdown+"s":"🏢 En cours...")):"🏢 Franchises"),
