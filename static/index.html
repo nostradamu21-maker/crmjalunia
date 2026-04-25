@@ -147,15 +147,21 @@ const RANK_ICONS=["🔰","⚡","🗡️","👑","💎","🌟"];
 // ─── API Helper ──────────────────────────────────────────────────────────────
 let TOKEN=localStorage.getItem("crm_token")||"";
 const setToken=(t)=>{TOKEN=t;if(t)localStorage.setItem("crm_token",t);else localStorage.removeItem("crm_token");};
-const api=async(path,opts={})=>{
-  const fetchOpts={method:opts.method||"GET",headers:{"Authorization":"Bearer "+TOKEN}};
-  if(opts.body){fetchOpts.body=new Blob([opts.body],{type:"application/json"});}
-  const res=await fetch("/api"+path,fetchOpts);
-  if(res.status===401&&path!=="/refresh-token"){setToken("");window._onAuthLost&&window._onAuthLost();throw new Error("Session expiree");}
-  const data=await res.json();
-  if(!res.ok)throw new Error(data.error||"Erreur");
-  return data;
-};
+const api=(path,opts={})=>new Promise((resolve,reject)=>{
+  const xhr=new XMLHttpRequest();
+  xhr.open(opts.method||"GET","/api"+path);
+  xhr.setRequestHeader("Authorization","Bearer "+TOKEN);
+  if(opts.body)xhr.setRequestHeader("Content-Type","application/json;charset=UTF-8");
+  xhr.timeout=90000;
+  xhr.onload=()=>{
+    if(xhr.status===401&&path!=="/refresh-token"){setToken("");window._onAuthLost&&window._onAuthLost();reject(new Error("Session expiree"));return;}
+    try{const d=JSON.parse(xhr.responseText);if(xhr.status>=400)reject(new Error(d.error||"Erreur "+xhr.status));else resolve(d);}
+    catch(e){reject(new Error("Erreur serveur ("+xhr.status+")"));}
+  };
+  xhr.onerror=()=>reject(new Error("Erreur reseau"));
+  xhr.ontimeout=()=>reject(new Error("Timeout"));
+  xhr.send(opts.body||null);
+});
 // Auto-refresh token every 30 min to avoid expiration
 setInterval(async()=>{if(!TOKEN)return;try{const r=await api("/refresh-token",{method:"POST"});if(r.token)setToken(r.token);}catch(e){}},30*60*1000);
 
