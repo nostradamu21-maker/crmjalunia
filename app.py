@@ -1585,6 +1585,8 @@ def scrape_deep():
                 "lat": place.get("geometry", {}).get("location", {}).get("lat"),
                 "lng": place.get("geometry", {}).get("location", {}).get("lng"),
                 "duplicate": False,
+            })
+
         return jsonify({
             "results": all_results,
             "total": len(all_results),
