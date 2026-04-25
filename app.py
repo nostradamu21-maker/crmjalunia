@@ -1503,17 +1503,55 @@ def scrape_deep():
 
     radius_km = min(_safe_int(data.get("radius", 15), 15), 50)
 
+    # Built-in French city coordinates (fallback if Geocoding API not enabled)
+    FRENCH_CITIES = {
+        "paris":(48.8566,2.3522),"marseille":(43.2965,5.3698),"lyon":(45.7640,4.8357),
+        "toulouse":(43.6047,1.4442),"nice":(43.7102,7.2620),"nantes":(47.2184,-1.5536),
+        "strasbourg":(48.5734,7.7521),"montpellier":(43.6108,3.8767),"bordeaux":(44.8378,-0.5792),
+        "lille":(50.6292,3.0573),"rennes":(48.1173,-1.6778),"reims":(49.2583,4.0317),
+        "le havre":(49.4944,0.1079),"saint-etienne":(45.4397,4.3872),"toulon":(43.1242,5.9280),
+        "grenoble":(45.1885,5.7245),"dijon":(47.3220,5.0415),"angers":(47.4784,-0.5632),
+        "nimes":(43.8367,4.3601),"le mans":(48.0061,0.1996),"clermont-ferrand":(45.7772,3.0870),
+        "tours":(47.3941,0.6848),"amiens":(49.8941,2.2958),"limoges":(45.8315,1.2578),
+        "perpignan":(42.6887,2.8948),"besancon":(47.2378,6.0241),"metz":(49.1193,6.1757),
+        "orleans":(47.9029,1.9093),"rouen":(49.4432,1.0999),"mulhouse":(47.7508,7.3359),
+        "caen":(49.1829,-0.3707),"nancy":(48.6921,6.1844),"argenteuil":(48.9472,2.2467),
+        "saint-denis":(48.9362,2.3574),"montreuil":(48.8638,2.4483),"avignon":(43.9493,4.8055),
+        "poitiers":(46.5802,0.3404),"versailles":(48.8014,2.1301),"la rochelle":(46.1603,-1.1511),
+        "pau":(43.2951,-0.3708),"calais":(50.9513,1.8587),"brest":(48.3904,-4.4861),
+        "bayonne":(43.4929,-1.4748),"ajaccio":(41.9192,8.7386),"biarritz":(43.4832,-1.5586),
+        "colmar":(48.0794,7.3558),"vannes":(47.6584,-2.7602),"quimper":(47.9960,-4.1024),
+        "troyes":(48.2973,4.0744),"beaune":(47.0260,4.8400),"auxerre":(47.7979,3.5714),
+        "macon":(46.3069,4.8286),"chalon-sur-saone":(46.7809,4.8537),
+        "annecy":(45.8992,6.1294),"chambery":(45.5646,5.9178),"valence":(44.9334,4.8924),
+        "saint-malo":(48.6493,-2.0070),"lorient":(47.7482,-3.3702),"lourdes":(43.0950,-0.0459),
+        "carcassonne":(43.2130,2.3491),"beziers":(43.3441,3.2152),"sete":(43.4053,3.6975),
+        "aix-en-provence":(43.5297,5.4474),"antibes":(43.5808,7.1239),"cannes":(43.5528,7.0174),
+        "hyeres":(43.1204,6.1286),"arles":(43.6767,4.6278),"gap":(44.5594,6.0786),
+        "dax":(43.7102,-1.0534),"arcachon":(44.6610,-1.1681),"royan":(45.6287,-1.0287),
+        "saint-tropez":(43.2727,6.6406),"megeve":(45.8567,6.6175),"chamonix":(45.9237,6.8694),
+    }
+
     try:
         # Step 1: Geocode the city
-        geo_resp = req.get("https://maps.googleapis.com/maps/api/geocode/json",
-                          params={"address": city + ", France", "key": api_key}, timeout=10)
-        _track_api_call()
-        geo_data = geo_resp.json()
-        if not geo_data.get("results"):
-            return jsonify({"error": f"Ville '{city}' non trouvee"}), 400
+        center_lat, center_lng = None, None
+        city_lower = city.lower().strip()
 
-        center = geo_data["results"][0]["geometry"]["location"]
-        center_lat, center_lng = center["lat"], center["lng"]
+        # Try built-in coordinates first
+        if city_lower in FRENCH_CITIES:
+            center_lat, center_lng = FRENCH_CITIES[city_lower]
+        else:
+            # Fallback to Google Geocoding API
+            geo_resp = req.get("https://maps.googleapis.com/maps/api/geocode/json",
+                              params={"address": city + ", France", "key": api_key}, timeout=10)
+            _track_api_call()
+            geo_data = geo_resp.json()
+            if geo_data.get("results"):
+                center = geo_data["results"][0]["geometry"]["location"]
+                center_lat, center_lng = center["lat"], center["lng"]
+
+        if center_lat is None:
+            return jsonify({"error": f"Ville '{city}' non trouvee. Essayez une grande ville ou verifiez l'orthographe."}), 400
 
         # Step 2: Create a grid of search points (3x3 = 9 sectors)
         step = radius_km / 111.0  # ~1 degree = 111km
