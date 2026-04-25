@@ -1373,7 +1373,7 @@ def scrape_search():
         return jsonify({"error": "Requete vide"}), 400
 
     location = data.get("location", "").strip()
-    max_pages = min(_safe_int(data.get("pages", 1), 1), 3)
+    max_pages = min(_safe_int(data.get("pages", 3), 3), 3)
 
     # Split locations by comma for multi-city search
     locations = [l.strip() for l in location.split(",") if l.strip()] if location else [""]
