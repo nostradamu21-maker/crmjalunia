@@ -2182,91 +2182,56 @@ def import_datagouv():
         except Exception:
             pass
 
+        def _get(item, *keys):
+            for k in keys:
+                v = item.get(k)
+                if v and str(v).strip() and str(v).strip() != "-":
+                    return str(v).strip()
+            return ""
+
         batch = []
         for item in prospects_data:
             if not isinstance(item, dict):
                 stats["errors"] += 1
                 continue
 
-            # Try many possible field names (data.gouv.fr is inconsistent)
-            nom = (item.get("nom") or item.get("Nom") or item.get("name") or
-                   item.get("NOM_COMMERCIAL") or item.get("nom_commercial") or
-                   item.get("RAISON_SOCIALE") or item.get("raison_sociale") or
-                   item.get("rdfs:label", {}).get("@value", "") if isinstance(item.get("rdfs:label"), dict) else
-                   item.get("rdfs:label") or
-                   item.get("schema:name", {}).get("@value", "") if isinstance(item.get("schema:name"), dict) else
-                   item.get("schema:name") or
-                   item.get("Nom commercial") or item.get("DENOMINATION") or "")
-
-            if isinstance(nom, dict):
-                nom = nom.get("@value", "") or nom.get("fr", "") or str(nom)
-            nom = str(nom).strip()[:200]
+            nom = _get(item, "NOM COMMERCIAL", "NOM_COMMERCIAL", "nom_commercial",
+                       "Nom commercial", "nom", "Nom", "name", "Name",
+                       "RAISON_SOCIALE", "raison_sociale", "DENOMINATION",
+                       "rdfs:label", "schema:name")
             if not nom:
                 stats["errors"] += 1
                 continue
-
-            # Department filter
-            ville = (item.get("ville") or item.get("Ville") or item.get("COMMUNE") or
-                     item.get("commune") or item.get("schema:addressLocality") or
-                     item.get("Commune") or item.get("city") or "")
-            if isinstance(ville, dict):
-                ville = ville.get("@value", "")
-            ville = str(ville).strip()[:100]
-
-            code_dept = (item.get("DEP") or item.get("dep") or item.get("departement") or
-                         item.get("CODE_DEPT") or item.get("code_postal", "")[:2] or
-                         item.get("CP", "")[:2] or "")
-            if dept and str(code_dept) != dept:
-                continue
+            nom = nom[:200]
 
             if _normalize(nom) in existing_names:
                 stats["skipped"] += 1
                 continue
 
-            email = (item.get("email") or item.get("Email") or item.get("COURRIEL") or
-                     item.get("courriel") or item.get("schema:email") or
-                     item.get("Courriel") or item.get("mail") or "")
-            if isinstance(email, dict):
-                email = email.get("@value", "")
-            email = str(email).strip().lower()[:200]
-
-            tel = (item.get("telephone") or item.get("Telephone") or item.get("TEL") or
-                   item.get("tel") or item.get("schema:telephone") or
-                   item.get("Téléphone") or item.get("phone") or "")
-            if isinstance(tel, dict):
-                tel = tel.get("@value", "")
-            tel = str(tel).strip()[:30]
-
-            site = (item.get("site_web") or item.get("Site web") or item.get("URL") or
-                    item.get("url") or item.get("site_internet") or item.get("site") or
-                    item.get("schema:url") or item.get("SITEWEB") or "")
-            if isinstance(site, dict):
-                site = site.get("@value", "")
-            site = str(site).strip()[:300]
-
-            adresse = (item.get("adresse") or item.get("Adresse") or item.get("ADRESSE") or
-                       item.get("schema:streetAddress") or item.get("adresse1") or "")
-            if isinstance(adresse, dict):
-                adresse = adresse.get("@value", "")
-            adresse = str(adresse).strip()[:300]
-
-            type_ = (item.get("type") or item.get("Type") or item.get("CATEGORIE") or
-                     item.get("categorie") or item.get("classement") or
-                     item.get("TYPE_HEBERGEMENT") or "hebergement")
-            if isinstance(type_, dict):
-                type_ = type_.get("@value", "")
-            type_ = str(type_).strip()[:80]
-
-            cp = (item.get("code_postal") or item.get("CP") or item.get("Code postal") or
-                  item.get("schema:postalCode") or "")
-            if isinstance(cp, dict):
-                cp = cp.get("@value", "")
-            region = str(cp).strip()[:10] + " " + ville if cp else ville
+            ville = _get(item, "COMMUNE", "commune", "Commune", "ville", "Ville",
+                         "city", "City", "schema:addressLocality")[:100]
+            cp = _get(item, "CODE POSTAL", "CODE_POSTAL", "code_postal", "Code postal",
+                      "CP", "cp", "schema:postalCode")[:10]
+            adresse = _get(item, "ADRESSE", "adresse", "Adresse", "address",
+                           "schema:streetAddress")[:300]
+            site = _get(item, "SITE INTERNET", "SITE_INTERNET", "site_internet",
+                        "Site Internet", "site_web", "site", "website", "URL",
+                        "url", "schema:url", "SITEWEB")[:300]
+            type_ = _get(item, "TYPOLOGIE ÉTABLISSEMENT", "TYPOLOGIE_ETABLISSEMENT",
+                         "type", "Type", "CATEGORIE", "categorie", "category",
+                         "TYPE_HEBERGEMENT", "classement")[:80]
+            email = _get(item, "email", "Email", "COURRIEL", "courriel",
+                         "schema:email", "mail", "MAIL")[:200].lower()
+            tel = _get(item, "telephone", "Telephone", "TEL", "tel",
+                       "schema:telephone", "phone", "TELEPHONE")[:30]
+            classement = _get(item, "CLASSEMENT", "classement")
+            region = (cp + " " + ville).strip() if cp else ville
 
             p = Prospect(
-                nom=nom, type=type_, ville=ville, region=region[:100],
+                nom=nom, type=type_ or "hebergement", ville=ville, region=region[:100],
                 email=email, telephone=tel, site_web=site,
                 adresse=adresse, status="new",
+                notes=classement,
                 unsubscribe_token=secrets.token_urlsafe(32),
             )
             _calculate_score(p)
