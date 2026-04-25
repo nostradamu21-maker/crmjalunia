@@ -2674,73 +2674,39 @@ def datatourisme_search():
         return jsonify({"error": "Cle API DATAtourisme non configuree. Allez dans Config."}), 400
 
     data = request.get_json() or {}
-    page = _safe_int(data.get("page", 1), 1)
-    size = min(_safe_int(data.get("size", 20), 20), 100)
-    dept = data.get("departement", "").strip()
-    commune = data.get("commune", "").strip()
     debug = data.get("debug", False)
+    dept = data.get("departement", "").strip()
 
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
 
-    # Build query params
-    params = {"page": page, "size": size}
+    # Try multiple possible endpoints
+    endpoints = [
+        "https://api.datatourisme.fr/v1/search",
+        "https://api.datatourisme.fr/v1/poi",
+        "https://api.datatourisme.fr/v1/lodging",
+        "https://api.datatourisme.fr/v1/hebergements",
+        "https://api.datatourisme.fr/v1/accommodation",
+        "https://api.datatourisme.fr/v1/datatourisme",
+        "https://api.datatourisme.fr/v1/",
+        "https://api.datatourisme.fr/api/v1/search",
+    ]
 
-    # Filter by accommodation types
-    params["types"] = "schema:LodgingBusiness"
+    if debug:
+        results = []
+        for ep in endpoints:
+            try:
+                params = {"size": 1}
+                if dept:
+                    params["departement"] = dept
+                r = req.get(ep, params=params, headers=headers, timeout=5)
+                results.append({"endpoint": ep, "status": r.status_code, "body": r.text[:300]})
+                if r.status_code == 200:
+                    break
+            except Exception as e:
+                results.append({"endpoint": ep, "error": str(e)[:100]})
+        return jsonify({"debug": True, "endpoints": results})
 
-    if dept:
-        params["departement"] = dept
-    if commune:
-        params["commune"] = commune
-
-    try:
-        r = req.get("https://api.datatourisme.fr/v1/datatourisme",
-                    params=params, headers=headers, timeout=15)
-
-        if r.status_code == 401:
-            return jsonify({"error": "Cle API DATAtourisme invalide"}), 401
-        if r.status_code != 200:
-            return jsonify({"error": f"DATAtourisme API: HTTP {r.status_code} — {r.text[:200]}"}), 400
-
-        response_data = r.json()
-
-        if debug:
-            # Return raw response for debugging
-            sample = response_data if isinstance(response_data, list) else response_data.get("results", response_data.get("data", response_data.get("member", [])))
-            if isinstance(sample, list):
-                sample = sample[:2]
-            return jsonify({"debug": True, "raw": response_data if not isinstance(response_data, list) else None,
-                            "sample": sample, "keys": list(sample[0].keys()) if sample and isinstance(sample[0], dict) else [],
-                            "type": str(type(response_data).__name__), "status": r.status_code})
-
-        # Parse results — handle various DATAtourisme response formats
-        items = []
-        if isinstance(response_data, list):
-            items = response_data
-        elif isinstance(response_data, dict):
-            items = (response_data.get("results") or response_data.get("data") or
-                     response_data.get("member") or response_data.get("@graph") or
-                     response_data.get("hydra:member") or [])
-            if not items and "rdfs:label" in response_data:
-                items = [response_data]
-
-        total_items = len(items)
-        if isinstance(response_data, dict):
-            total_items = (response_data.get("totalItems") or response_data.get("hydra:totalItems") or
-                          response_data.get("total") or len(items))
-
-        return jsonify({
-            "ok": True,
-            "results": items[:size],
-            "total": total_items,
-            "page": page,
-            "size": size,
-        })
-
-    except req.exceptions.Timeout:
-        return jsonify({"error": "Timeout DATAtourisme API"}), 504
-    except Exception as e:
-        return jsonify({"error": str(e)[:300]}), 500
+    return jsonify({"error": "Utilisez debug:true pour tester les endpoints"}), 400
 
 @app.route("/api/datatourisme/import", methods=["POST"])
 @require_auth
