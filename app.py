@@ -2748,7 +2748,7 @@ def datatourisme_import():
             "page": page, "page_size": page_size, "lang": "fr",
             "fields": "uuid,label,type,hasContact,isLocatedAt",
         }
-        filters = 'type[in]=Accommodation,LodgingBusiness,Gîte,ChambresDHôtes,Hotel,HotelTrade,ClubOrHolidayVillage,CampingAndCaravanning,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation'
+        filters = 'type[in]=Accommodation,LodgingBusiness,Hotel,HotelTrade,CollectiveAccommodation,Hostel,RentalAccommodation,SelfCateringAccommodation,CampingAndCaravanning,ClubOrHolidayVillage'
         if dept:
             filters += f' AND isLocatedAt.address.hasAddressCity.isPartOfDepartment.insee[eq]={dept}'
         params["filters"] = filters

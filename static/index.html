@@ -1073,7 +1073,7 @@ function ScrapingView(){
               totalImported+=r.imported||0;totalSkipped+=r.skipped||0;
               showToast("📦","Page "+page+"/"+(r.totalPages||"?")+" — "+totalImported+" importes","#00f0ff");
               hasMore=r.hasMore;page++;errors=0;
-              await new Promise(r=>setTimeout(r,1500));
+              await new Promise(r=>setTimeout(r,4000));
             }catch(e){
               errors++;
               showToast("⚠️","Page "+page+" echec ("+errors+"/5): "+e.message,"#ffe600");
