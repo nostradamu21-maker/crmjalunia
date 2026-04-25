@@ -2780,6 +2780,20 @@ def datatourisme_import():
                  "totalPages": meta.get("total_pages", 0)}
         batch = []
 
+        def _clean_val(val):
+            """Extract clean string from DATAtourisme value (handles @fr, fr, @value, lists)."""
+            if val is None:
+                return ""
+            if isinstance(val, str):
+                return val.strip()
+            if isinstance(val, (int, float)):
+                return str(val)
+            if isinstance(val, dict):
+                return str(val.get("@fr") or val.get("fr") or val.get("@value") or val.get("@en") or next(iter(val.values()), "")).strip()
+            if isinstance(val, list) and val:
+                return _clean_val(val[0])
+            return str(val).strip()
+
         def _dt_get(obj, *paths):
             """Extract value from nested DATAtourisme object."""
             for path in paths:
@@ -2792,13 +2806,9 @@ def datatourisme_import():
                     else:
                         val = None
                         break
-                if val and str(val).strip():
-                    if isinstance(val, dict):
-                        return val.get("fr", val.get("@value", str(val)))
-                    if isinstance(val, list):
-                        v = val[0]
-                        return v.get("fr", v.get("@value", str(v))) if isinstance(v, dict) else str(v)
-                    return str(val).strip()
+                result = _clean_val(val)
+                if result:
+                    return result
             return ""
 
         for item in objects:
@@ -2886,6 +2896,30 @@ def bulk_delete():
     Prospect.query.filter(Prospect.id.in_(ids)).delete(synchronize_session=False)
     db.session.commit()
     return jsonify({"ok": True, "deleted": len(ids)})
+
+# --- API: Fix prospect names with dict artifacts ----------------------------
+@app.route("/api/prospects/fix-names", methods=["POST"])
+@require_auth
+def fix_names():
+    """Clean up prospect names that contain {'@fr': '...'} artifacts."""
+    import ast
+    fixed = 0
+    prospects = Prospect.query.filter(Prospect.nom.ilike("%@fr%")).all()
+    for p in prospects:
+        nom = p.nom
+        if "{'@fr'" in nom or '{"@fr"' in nom:
+            try:
+                d = ast.literal_eval(nom)
+                if isinstance(d, dict):
+                    p.nom = str(d.get("@fr") or d.get("fr") or next(iter(d.values()), nom)).strip()[:200]
+                    fixed += 1
+            except Exception:
+                clean = re.sub(r"\{['\"]@fr['\"]:\s*['\"](.+?)['\"]\}", r"\1", nom)
+                if clean != nom:
+                    p.nom = clean[:200]
+                    fixed += 1
+    db.session.commit()
+    return jsonify({"ok": True, "fixed": fixed})
 
 # --- Health Check -------------------------------------------------------------
 @app.route("/health")
