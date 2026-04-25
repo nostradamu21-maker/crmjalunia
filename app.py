@@ -1362,6 +1362,7 @@ def scrape_search():
         params = {"query": full_query, "key": api_key, "language": "fr"}
         if next_page_token:
             params = {"pagetoken": next_page_token, "key": api_key}
+            time.sleep(2)  # Google requires ~2s before next_page_token is valid
 
         resp = req.get("https://maps.googleapis.com/maps/api/place/textsearch/json",
                        params=params, timeout=15)
@@ -1370,11 +1371,21 @@ def scrape_search():
         if data.get("status") not in ("OK", "ZERO_RESULTS"):
             return jsonify({"error": f"Google API: {data.get('status')} — {data.get('error_message', '')}"}), 400
 
+        # Load existing prospect names for dedup
+        existing_names = set()
+        for row in db.session.execute(db.text("SELECT lower(nom) FROM prospects WHERE nom IS NOT NULL")):
+            existing_names.add(row[0])
+
         results = []
+        skipped = 0
         for place in data.get("results", []):
+            name = place.get("name", "")
+            if name.lower() in existing_names:
+                skipped += 1
+                continue
             results.append({
                 "placeId": place.get("place_id", ""),
-                "nom": place.get("name", ""),
+                "nom": name,
                 "adresse": place.get("formatted_address", ""),
                 "note": place.get("rating", 0),
                 "avis": place.get("user_ratings_total", 0),
@@ -1386,6 +1397,7 @@ def scrape_search():
         return jsonify({
             "results": results,
             "total": len(results),
+            "skipped": skipped,
             "nextPageToken": data.get("next_page_token"),
         })
 
@@ -1857,6 +1869,48 @@ def hunter_credits():
         })
     except Exception as e:
         return jsonify({"error": str(e)[:200]}), 500
+
+# --- API: Clean fake/demo prospects -------------------------------------------
+@app.route("/api/clean-demo", methods=["POST"])
+@require_auth
+def clean_demo():
+    """Delete prospects with demo/fake/test URLs or generated names."""
+    # Find fake prospects
+    fake = Prospect.query.filter(
+        db.or_(
+            Prospect.site_web.ilike("%demo%"),
+            Prospect.site_web.ilike("%test%"),
+            Prospect.site_web.ilike("%example%"),
+            Prospect.site_web.ilike("%fake%"),
+            Prospect.site_web.ilike("%lorem%"),
+            Prospect.nom.ilike("%demo%"),
+            Prospect.nom.ilike("%test prospect%"),
+        )
+    ).all()
+
+    # Also find names ending with a number like "Hotel ABC 1234"
+    all_suspects = Prospect.query.all()
+    number_names = [p for p in all_suspects if p.nom and re.match(r'^.+ \d+$', p.nom.strip())]
+
+    to_delete = set(p.id for p in fake) | set(p.id for p in number_names)
+
+    if not to_delete:
+        return jsonify({"ok": True, "deleted": 0, "message": "Aucun prospect fake trouve"})
+
+    # Preview first
+    data = request.get_json() or {}
+    if not data.get("confirm"):
+        samples = []
+        for p in (fake + number_names)[:20]:
+            if p.id in to_delete:
+                samples.append({"id": p.id, "nom": p.nom, "site": p.site_web or "", "ville": p.ville or ""})
+        return jsonify({"ok": True, "count": len(to_delete), "samples": samples, "needConfirm": True})
+
+    # Actually delete
+    EmailLog.query.filter(EmailLog.prospect_id.in_(to_delete)).delete(synchronize_session=False)
+    Prospect.query.filter(Prospect.id.in_(to_delete)).delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({"ok": True, "deleted": len(to_delete)})
 
 # --- API: Bulk Delete ---------------------------------------------------------
 @app.route("/api/bulk-delete", methods=["POST"])
