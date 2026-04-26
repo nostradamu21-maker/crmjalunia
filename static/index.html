@@ -872,13 +872,50 @@ function CampaignView(){
         h("button",{onClick:applyTpl,disabled:applying||!tpl.email1Sujet,
           className:"px-5 py-2.5 text-white rounded-lg text-sm font-medium disabled:opacity-40",
           style:{background:"linear-gradient(135deg,#00f0ff,#a855f7)"}},
-          applying?"Application...":"Appliquer aux prospects sans template"),
+          applying?"Application...":"Appliquer templates identiques"),
         h("button",{onClick:async()=>{
           try{const r=await api("/preview-email",{method:"POST",body:JSON.stringify({subject:tpl.email1Sujet,body:tpl.email1Corps})});setPreview(r);}
           catch(e){setPreview({error:e.message});}
         },disabled:!tpl.email1Sujet,className:"px-5 py-2.5 border border-gray-700 rounded-lg text-sm font-medium text-gray-400 hover:border-gray-500 disabled:opacity-40"},"👁 Preview"),
         applyResult?h("span",{className:"text-sm "+(applyResult.error?"text-red-400":"text-neonGreen")},
           applyResult.error||applyResult.updated+" prospects mis a jour"):null),
+
+      // AI generation section
+      h("div",{className:"mt-6 pt-6 border-t border-gray-800"},
+        h("div",{className:"flex items-center justify-between mb-3"},
+          h("div",null,
+            h("h3",{className:"font-semibold text-white"},"🤖 Generation IA — Emails personnalises"),
+            h("p",{className:"text-xs text-gray-500 mt-1"},"Genere des emails uniques pour chaque prospect avec Claude AI. S'adapte au type (gite, hotel...), a la ville, et a la note Google.")),
+          h("div",{className:"text-right"},
+            h("span",{className:"text-xs text-gray-600"},"~0.002$/email"))),
+        h("div",{className:"flex flex-wrap items-center gap-3"},
+          h("input",{id:"ai-context",placeholder:"Contexte optionnel (ex: nous proposons des solutions de visibilite en ligne pour hebergeurs)",
+            className:"flex-1 px-3 py-2.5 border border-gray-700 rounded-lg text-sm bg-gray-800 text-gray-200 focus:outline-none focus:ring-2 focus:ring-neon/30",style:{minWidth:250}}),
+          h("button",{onClick:async()=>{
+            const ctx=document.getElementById("ai-context").value;
+            showToast("🤖","Generation IA en cours...","#a855f7");
+            try{const r=await api("/generate-emails-ai",{method:"POST",body:JSON.stringify({batchSize:5,context:ctx})});
+              showToast("✅",r.generated+" emails generes — "+r.remaining+" restants","#00ff88");
+              if(r.details&&r.details[0])showToast("📧","Ex: "+r.details[0].sujet,"#00f0ff");
+              loadStats();
+            }catch(e){showToast("💀",e.message,"#ef4444");}
+          },className:"px-5 py-2.5 text-white rounded-lg text-sm font-bold",
+            style:{background:"linear-gradient(135deg,#ff00e5,#a855f7)"}},"🤖 Generer 5 emails"),
+          h("button",{onClick:async()=>{
+            const ctx=document.getElementById("ai-context").value;
+            let total=0;let hasMore=true;
+            showToast("🤖","Generation IA en masse...","#a855f7");
+            while(hasMore){
+              try{const r=await api("/generate-emails-ai",{method:"POST",body:JSON.stringify({batchSize:5,context:ctx})});
+                total+=r.generated||0;hasMore=r.remaining>0&&r.generated>0;
+                showToast("🤖",total+" generes — "+r.remaining+" restants","#a855f7");
+                await new Promise(r=>setTimeout(r,2000));
+              }catch(e){showToast("💀",e.message,"#ef4444");break;}
+            }
+            showToast("✅",total+" emails generes au total !","#00ff88");
+            if(total>20)launchConfetti();
+          },className:"px-5 py-2.5 border border-purple-500/40 text-purple-400 rounded-lg text-sm font-bold hover:border-purple-400"},
+            "🤖 Generer tout (auto)"))),
       preview&&!preview.error?h("div",{className:"mt-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700"},
         h("div",{className:"flex items-center justify-between mb-2"},
           h("span",{className:"text-xs text-gray-500"},"Preview avec: "+preview.prospect.nom+" ("+preview.prospect.email+")"),
@@ -1408,10 +1445,11 @@ function SettingsView(){
         h("h3",{className:"font-semibold text-gray-300 mb-3"},"🔑 API externes"),
         h("p",{className:"text-xs text-gray-600 mb-3 p-2 bg-gray-800/50 rounded-lg"},
           "💡 Google Places: scraping de prospects. Hunter.io: trouver des emails par domaine (25/mois gratuit sur hunter.io)."),
-        h("div",{className:"grid grid-cols-3 gap-4"},
+        h("div",{className:"grid grid-cols-2 gap-4"},
           h(Field,{label:"Google Places",k:"google_places_api_key"}),
           h(Field,{label:"Hunter.io",k:"hunter_api_key"}),
-          h(Field,{label:"DATAtourisme",k:"datatourisme_api_key"})),
+          h(Field,{label:"DATAtourisme",k:"datatourisme_api_key"}),
+          h(Field,{label:"Anthropic (Claude AI — pour emails IA)",k:"anthropic_api_key"})),
         hunter&&hunter.ok?h("div",{className:"mt-3 p-3 rounded-lg border border-gray-800 bg-gray-800/30"},
           h("div",{className:"flex items-center justify-between mb-2"},
             h("span",{className:"text-sm font-bold text-white"},"🔎 Hunter.io — "+hunter.plan),

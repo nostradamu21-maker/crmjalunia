@@ -233,6 +233,90 @@ def _render_template(text, prospect):
 def _is_valid_email(email):
     return bool(email and re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email.strip()))
 
+def _generate_email_with_ai(prospect, email_num, context=""):
+    """Generate a personalized email using Claude API."""
+    import requests as req
+
+    api_key = Setting.get("anthropic_api_key", "")
+    if not api_key:
+        return None, None
+
+    type_labels = {
+        "HÔTEL DE TOURISME": "hôtel", "MEUBLÉ DE TOURISME": "meublé de tourisme",
+        "VILLAGE DE VACANCES": "village de vacances", "RÉSIDENCE DE TOURISME": "résidence",
+        "CAMPING": "camping", "PARC RÉSIDENTIEL DE LOISIRS": "parc résidentiel",
+    }
+    type_label = type_labels.get(prospect.type, prospect.type or "hébergement")
+
+    prompts = {
+        1: f"""Tu es un commercial B2B qui contacte des hébergeurs touristiques en France.
+Écris un email de premier contact court et percutant (max 5 phrases) pour {prospect.nom}, un(e) {type_label} situé(e) à {prospect.ville or 'France'}.
+{f'Note Google: {prospect.note_google}/5 ({prospect.nb_avis} avis).' if prospect.note_google else ''}
+{f'Site web: {prospect.site_web}' if prospect.site_web else "Pas de site web."}
+{context}
+
+Règles:
+- Tutoie pas, vouvoie
+- Sois naturel, pas commercial/spam
+- Personnalise avec le nom et la ville
+- Propose un bénéfice concret (visibilité, réservations, avis clients)
+- Termine par une question ouverte
+- PAS de "[Votre nom]" ou "[Votre entreprise]" — signe juste "L'équipe Jalunia"
+
+Réponds UNIQUEMENT au format:
+SUJET: (le sujet de l'email)
+CORPS: (le corps de l'email)""",
+
+        2: f"""Écris un email de relance court (max 4 phrases) pour {prospect.nom}, un(e) {type_label} à {prospect.ville or 'France'}.
+C'est le 2ème email, le premier n'a pas eu de réponse.
+{context}
+
+Règles:
+- Vouvoie, sois bref et direct
+- Rappelle le premier email sans être insistant
+- Apporte une nouvelle info ou un angle différent
+- Signe "L'équipe Jalunia"
+
+Réponds UNIQUEMENT au format:
+SUJET: (le sujet)
+CORPS: (le corps)""",
+
+        3: f"""Écris un dernier email très court (max 3 phrases) pour {prospect.nom}, un(e) {type_label} à {prospect.ville or 'France'}.
+C'est le 3ème et dernier email. Les 2 précédents n'ont pas eu de réponse.
+{context}
+
+Règles:
+- Ultra court, pas de pression
+- Laisse la porte ouverte
+- Signe "L'équipe Jalunia"
+
+Réponds UNIQUEMENT au format:
+SUJET: (le sujet)
+CORPS: (le corps)"""
+    }
+
+    try:
+        r = req.post("https://api.anthropic.com/v1/messages",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                    json={"model": "claude-haiku-4-5-20251001", "max_tokens": 500,
+                          "messages": [{"role": "user", "content": prompts.get(email_num, prompts[1])}]},
+                    timeout=15)
+        if r.status_code != 200:
+            return None, None
+
+        text = r.json().get("content", [{}])[0].get("text", "")
+        sujet = ""
+        corps = ""
+        for line in text.split("\n"):
+            if line.startswith("SUJET:"):
+                sujet = line.replace("SUJET:", "").strip()
+            elif line.startswith("CORPS:"):
+                corps = text.split("CORPS:", 1)[1].strip()
+                break
+        return sujet, corps
+    except Exception:
+        return None, None
+
 # MX record cache to avoid repeated DNS lookups
 _mx_cache = {}
 
@@ -1036,6 +1120,52 @@ def onboarding():
         "warmup": warmup,
     })
 
+# --- API: AI Email Generation -------------------------------------------------
+@app.route("/api/generate-emails-ai", methods=["POST"])
+@require_auth
+def generate_emails_ai():
+    """Generate personalized emails for prospects using Claude AI."""
+    data = request.get_json() or {}
+    batch_size = min(_safe_int(data.get("batchSize", 5), 5), 10)
+    context = data.get("context", "")
+
+    api_key = Setting.get("anthropic_api_key", "")
+    if not api_key:
+        return jsonify({"error": "Cle API Anthropic non configuree. Allez dans Config."}), 400
+
+    prospects = Prospect.query.filter(
+        Prospect.email != "", Prospect.email.isnot(None),
+        Prospect.status == "new",
+        db.or_(Prospect.email1_sujet == "", Prospect.email1_sujet.is_(None)),
+    ).limit(batch_size).all()
+
+    if not prospects:
+        return jsonify({"ok": True, "generated": 0, "remaining": 0})
+
+    remaining = Prospect.query.filter(
+        Prospect.email != "", Prospect.email.isnot(None),
+        Prospect.status == "new",
+        db.or_(Prospect.email1_sujet == "", Prospect.email1_sujet.is_(None)),
+    ).count() - len(prospects)
+
+    results = {"generated": 0, "remaining": remaining, "details": []}
+
+    for p in prospects:
+        all_ok = True
+        for num in [1, 2, 3]:
+            sujet, corps = _generate_email_with_ai(p, num, context)
+            if sujet and corps:
+                setattr(p, f"email{num}_sujet", sujet[:300])
+                setattr(p, f"email{num}_corps", corps)
+            else:
+                all_ok = False
+        if all_ok:
+            results["generated"] += 1
+            results["details"].append({"nom": p.nom, "sujet": p.email1_sujet})
+
+    db.session.commit()
+    return jsonify({"ok": True, **results})
+
 # --- API: Bulk generate templates ---------------------------------------------
 @app.route("/api/bulk-generate-emails", methods=["POST"])
 @require_auth
@@ -1079,6 +1209,7 @@ def get_settings():
             "tpl_email2_sujet", "tpl_email2_corps",
             "tpl_email3_sujet", "tpl_email3_corps",
             "google_places_api_key", "hunter_api_key", "datatourisme_api_key",
+            "anthropic_api_key",
             "domain_blacklist",
             "warmup_enabled", "warmup_start_date"]
     return jsonify({k: Setting.get(k, "") for k in keys})
