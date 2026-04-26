@@ -75,6 +75,11 @@ def _auto_migrate(app):
 app = create_app()
 limiter = Limiter(get_remote_address, app=app, default_limits=["500 per minute"])
 
+def _normalize(text):
+    """Strip accents and lowercase for matching."""
+    import unicodedata
+    return unicodedata.normalize("NFD", text.lower().strip()).encode("ascii", "ignore").decode("ascii")
+
 # Backfill unsubscribe tokens for existing prospects (batched)
 with app.app_context():
     try:
@@ -85,6 +90,57 @@ with app.app_context():
             db.session.commit()
     except Exception:
         db.session.rollback()
+
+# One-time dedup + name cleanup on startup
+with app.app_context():
+    try:
+        from collections import defaultdict
+        # Fix names with {'@fr': '...'} artifacts
+        import ast
+        bad_names = Prospect.query.filter(Prospect.nom.ilike("%@fr%")).all()
+        for p in bad_names:
+            try:
+                d = ast.literal_eval(p.nom)
+                if isinstance(d, dict):
+                    p.nom = str(d.get("@fr") or d.get("fr") or next(iter(d.values()), p.nom)).strip()[:200]
+            except Exception:
+                clean = re.sub(r"\{['\"]@fr['\"]:\s*['\"](.+?)['\"]\}", r"\1", p.nom)
+                if clean != p.nom:
+                    p.nom = clean[:200]
+        if bad_names:
+            db.session.commit()
+            print(f"Fixed {len(bad_names)} prospect names")
+
+        # Remove duplicates (same name + ville)
+        groups = defaultdict(list)
+        for p in db.session.query(Prospect.id, Prospect.nom, Prospect.ville, Prospect.email,
+                                   Prospect.telephone, Prospect.site_web).all():
+            key = (_normalize(p.nom or ""), _normalize(p.ville or ""))
+            if key[0]:
+                groups[key].append(p)
+        to_delete = []
+        for key, prospects in groups.items():
+            if len(prospects) <= 1:
+                continue
+            def _score(p):
+                s = 0
+                if p.email: s += 3
+                if p.telephone: s += 2
+                if p.site_web: s += 2
+                return s
+            prospects.sort(key=_score, reverse=True)
+            for p in prospects[1:]:
+                to_delete.append(p.id)
+        if to_delete:
+            for i in range(0, len(to_delete), 500):
+                batch_ids = to_delete[i:i+500]
+                EmailLog.query.filter(EmailLog.prospect_id.in_(batch_ids)).delete(synchronize_session=False)
+                Prospect.query.filter(Prospect.id.in_(batch_ids)).delete(synchronize_session=False)
+                db.session.commit()
+            print(f"Removed {len(to_delete)} duplicate prospects")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Startup cleanup error: {e}")
 
 # 1x1 transparent GIF for tracking pixel
 TRACKING_GIF = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
