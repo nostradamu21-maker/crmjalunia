@@ -148,38 +148,44 @@ with app.app_context():
 with app.app_context():
     try:
         if not Setting.get("tpl_email1_sujet", ""):
-            Setting.set("tpl_email1_sujet", "{nom} — une idée pour booster vos réservations")
+            Setting.set("tpl_email1_sujet", "{nom} — et si vous divisiez par 2 vos commissions Booking ?")
             Setting.set("tpl_email1_corps", """Bonjour,
 
-Je me permets de vous contacter car je découvre {nom} à {ville} et votre établissement a retenu notre attention.
+Saviez-vous que Booking et Airbnb prélèvent entre 15% et 25% sur chacune de vos réservations ? Pour un établissement comme {nom} à {ville}, cela représente plusieurs milliers d'euros par an.
 
-Chez Jalunia, nous accompagnons les hébergeurs indépendants comme vous pour augmenter leur visibilité en ligne et leurs réservations directes — sans passer par les commissions des grandes plateformes.
+Chez Jalunia, nous aidons les hébergeurs indépendants à reprendre le contrôle : plus de réservations en direct, une meilleure visibilité en ligne, et surtout — moins de dépendance aux plateformes.
 
-Seriez-vous disponible pour un échange rapide de 10 minutes cette semaine ?
+Résultat concret : nos partenaires récupèrent en moyenne 40% de réservations directes supplémentaires dès le premier trimestre.
+
+Curieux de voir ce que ça donnerait pour {nom} ? Jetez un œil ici : https://jalunia.com
+
+Je serais ravi d'en discuter 10 minutes avec vous.
 
 Bien cordialement,
-L'équipe Jalunia""")
-            Setting.set("tpl_email2_sujet", "Re : Avez-vous eu le temps d'y réfléchir ?")
+L'équipe Jalunia
+https://jalunia.com""")
+            Setting.set("tpl_email2_sujet", "Re : {nom} — un chiffre qui devrait vous intéresser")
             Setting.set("tpl_email2_corps", """Bonjour,
 
-Je vous avais contacté il y a quelques jours au sujet de {nom}.
+Je vous avais contacté il y a quelques jours concernant {nom}.
 
-Je comprendrais tout à fait si le timing n'est pas idéal — la saison doit être bien chargée à {ville}. Je souhaitais simplement vous partager que nos partenaires hébergeurs constatent en moyenne +35% de réservations directes dès les 3 premiers mois.
+Un chiffre rapide : un hébergeur à {ville} qui passe de 80% Booking à 50% Booking + 50% direct économise en moyenne 8 000€/an sur les commissions — sans perdre un seul client.
 
-Si cela vous intéresse, je reste disponible pour en discuter.
+C'est exactement ce qu'on fait chez Jalunia. Pas de magie, juste les bons outils : site optimisé, référencement local, gestion des avis.
+
+Si le sujet vous parle, je suis disponible cette semaine pour un appel de 10 minutes : https://jalunia.com
 
 Bien cordialement,
 L'équipe Jalunia""")
-            Setting.set("tpl_email3_sujet", "Dernier message — {nom}")
+            Setting.set("tpl_email3_sujet", "{nom} — dernier message de ma part")
             Setting.set("tpl_email3_corps", """Bonjour,
 
-C'est mon dernier message, promis ! Je ne voudrais pas être insistant.
+Dernier message, promis. Je ne voudrais pas vous importuner.
 
-Si un jour vous souhaitez explorer des pistes pour développer les réservations directes de {nom}, n'hésitez pas à me recontacter — la porte est toujours ouverte.
+Si un jour vous en avez assez de reverser 20% de votre chiffre à Booking, sachez que la porte est ouverte : https://jalunia.com
 
-Je vous souhaite une excellente saison à {ville}.
+Excellente saison à {ville}.
 
-Bien cordialement,
 L'équipe Jalunia""")
             db.session.commit()
             print("Default email templates pre-filled")
@@ -291,19 +297,20 @@ def _generate_email_with_ai(prospect, email_num, context=""):
     type_label = type_labels.get(prospect.type, prospect.type or "hébergement")
 
     prompts = {
-        1: f"""Tu es un commercial B2B qui contacte des hébergeurs touristiques en France.
-Écris un email de premier contact court et percutant (max 5 phrases) pour {prospect.nom}, un(e) {type_label} situé(e) à {prospect.ville or 'France'}.
+        1: f"""Tu es un commercial B2B pour Jalunia (https://jalunia.com), une solution qui aide les hébergeurs indépendants à se libérer des commissions Booking/Airbnb (15-25%) en développant leurs réservations directes.
+Écris un email de premier contact court et percutant (max 6 phrases) pour {prospect.nom}, un(e) {type_label} situé(e) à {prospect.ville or 'France'}.
 {f'Note Google: {prospect.note_google}/5 ({prospect.nb_avis} avis).' if prospect.note_google else ''}
-{f'Site web: {prospect.site_web}' if prospect.site_web else "Pas de site web."}
+{f'Site web: {prospect.site_web}' if prospect.site_web else "Pas de site web — angle: ils en ont besoin pour les réservations directes."}
 {context}
 
 Règles:
-- Tutoie pas, vouvoie
-- Sois naturel, pas commercial/spam
-- Personnalise avec le nom et la ville
-- Propose un bénéfice concret (visibilité, réservations, avis clients)
-- Termine par une question ouverte
-- PAS de "[Votre nom]" ou "[Votre entreprise]" — signe juste "L'équipe Jalunia"
+- Vouvoie, sois naturel pas commercial
+- Commence par un pain point (commissions, dépendance plateformes)
+- Chiffre concret (+40% réservations directes, économie moyenne 8000€/an)
+- Mentionne https://jalunia.com naturellement
+- Termine par une question ouverte ou une invitation à voir le site
+- Signe "L'équipe Jalunia"
+- PAS de "[Votre nom]" ou crochets
 
 Réponds UNIQUEMENT au format:
 SUJET: (le sujet de l'email)
