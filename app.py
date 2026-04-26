@@ -144,6 +144,48 @@ with app.app_context():
         db.session.rollback()
         print(f"Startup cleanup error: {e}")
 
+# Pre-fill smart default templates if not set
+with app.app_context():
+    try:
+        if not Setting.get("tpl_email1_sujet", ""):
+            Setting.set("tpl_email1_sujet", "{nom} — une idée pour booster vos réservations")
+            Setting.set("tpl_email1_corps", """Bonjour,
+
+Je me permets de vous contacter car je découvre {nom} à {ville} et votre établissement a retenu notre attention.
+
+Chez Jalunia, nous accompagnons les hébergeurs indépendants comme vous pour augmenter leur visibilité en ligne et leurs réservations directes — sans passer par les commissions des grandes plateformes.
+
+Seriez-vous disponible pour un échange rapide de 10 minutes cette semaine ?
+
+Bien cordialement,
+L'équipe Jalunia""")
+            Setting.set("tpl_email2_sujet", "Re : Avez-vous eu le temps d'y réfléchir ?")
+            Setting.set("tpl_email2_corps", """Bonjour,
+
+Je vous avais contacté il y a quelques jours au sujet de {nom}.
+
+Je comprendrais tout à fait si le timing n'est pas idéal — la saison doit être bien chargée à {ville}. Je souhaitais simplement vous partager que nos partenaires hébergeurs constatent en moyenne +35% de réservations directes dès les 3 premiers mois.
+
+Si cela vous intéresse, je reste disponible pour en discuter.
+
+Bien cordialement,
+L'équipe Jalunia""")
+            Setting.set("tpl_email3_sujet", "Dernier message — {nom}")
+            Setting.set("tpl_email3_corps", """Bonjour,
+
+C'est mon dernier message, promis ! Je ne voudrais pas être insistant.
+
+Si un jour vous souhaitez explorer des pistes pour développer les réservations directes de {nom}, n'hésitez pas à me recontacter — la porte est toujours ouverte.
+
+Je vous souhaite une excellente saison à {ville}.
+
+Bien cordialement,
+L'équipe Jalunia""")
+            db.session.commit()
+            print("Default email templates pre-filled")
+    except Exception:
+        db.session.rollback()
+
 # 1x1 transparent GIF for tracking pixel
 TRACKING_GIF = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
 BASE_URL = os.environ.get("BASE_URL", "https://crmjalunia.onrender.com")
