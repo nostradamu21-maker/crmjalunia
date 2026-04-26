@@ -140,6 +140,43 @@ with app.app_context():
                 Prospect.query.filter(Prospect.id.in_(batch_ids)).delete(synchronize_session=False)
                 db.session.commit()
             print(f"Removed {len(to_delete)} duplicate prospects")
+
+        # Normalize prospect types (group similar categories)
+        TYPE_MAP = {
+            "hôtel": ["hotel", "hôtel", "hotel de tourisme", "hôtel de tourisme", "hoteltrade", "hotel trade"],
+            "gîte": ["gite", "gîte", "gites", "gîtes", "meuble de tourisme", "meublé de tourisme",
+                     "selfcateringaccommodation", "rentalaccommodation", "location vacances",
+                     "meuble tourisme", "meublé tourisme", "location saisonniere", "location saisonnière"],
+            "chambre d'hôtes": ["chambre d'hotes", "chambre d'hôtes", "chambres d'hotes", "chambres d'hôtes",
+                                "chambre hotes", "chambre hôtes", "bed and breakfast", "b&b", "b and b"],
+            "camping": ["camping", "campingandcaravanning", "camping et caravaning", "aire de camping",
+                        "naturalarecampground", "parc residentiel", "parc résidentiel de loisirs",
+                        "parc résidentiel"],
+            "résidence de tourisme": ["residence de tourisme", "résidence de tourisme", "residence tourisme",
+                                      "résidence tourisme", "appart hotel", "appart'hotel", "apparthotel",
+                                      "aparthotel", "collectiveaccommodation"],
+            "village vacances": ["village de vacances", "village vacances", "cluborholidayvillage",
+                                 "club vacances"],
+            "auberge": ["auberge", "auberge de jeunesse", "hostel", "lodge"],
+            "hébergement": ["hebergement", "hébergement", "accommodation", "lodgingbusiness",
+                           "lodging", "autre", "other", ""],
+        }
+        type_lookup = {}
+        for clean, variants in TYPE_MAP.items():
+            for v in variants:
+                type_lookup[v.lower().strip()] = clean
+
+        updated_types = 0
+        for p in Prospect.query.all():
+            if not p.type:
+                continue
+            normalized = type_lookup.get(p.type.lower().strip())
+            if normalized and normalized != p.type:
+                p.type = normalized
+                updated_types += 1
+        if updated_types:
+            db.session.commit()
+            print(f"Normalized {updated_types} prospect types")
     except Exception as e:
         db.session.rollback()
         print(f"Startup cleanup error: {e}")
