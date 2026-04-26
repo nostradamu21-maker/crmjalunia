@@ -2890,6 +2890,49 @@ def bulk_delete():
     db.session.commit()
     return jsonify({"ok": True, "deleted": len(ids)})
 
+# --- API: Remove duplicates ---------------------------------------------------
+@app.route("/api/prospects/remove-duplicates", methods=["POST"])
+@require_auth
+def remove_duplicates():
+    """Remove duplicate prospects, keeping the one with the most data."""
+    from collections import defaultdict
+
+    # Group by normalized name + ville
+    groups = defaultdict(list)
+    for p in db.session.query(Prospect.id, Prospect.nom, Prospect.ville, Prospect.email,
+                               Prospect.telephone, Prospect.site_web).all():
+        key = (_normalize(p.nom or ""), _normalize(p.ville or ""))
+        if key[0]:
+            groups[key].append(p)
+
+    to_delete = []
+    for key, prospects in groups.items():
+        if len(prospects) <= 1:
+            continue
+        # Keep the one with the most filled fields
+        def score(p):
+            s = 0
+            if p.email: s += 3
+            if p.telephone: s += 2
+            if p.site_web: s += 2
+            return s
+        prospects.sort(key=score, reverse=True)
+        # Delete all except the best one
+        for p in prospects[1:]:
+            to_delete.append(p.id)
+
+    if not to_delete:
+        return jsonify({"ok": True, "deleted": 0, "message": "Aucun doublon trouve"})
+
+    # Delete in batches
+    for i in range(0, len(to_delete), 500):
+        batch = to_delete[i:i+500]
+        EmailLog.query.filter(EmailLog.prospect_id.in_(batch)).delete(synchronize_session=False)
+        Prospect.query.filter(Prospect.id.in_(batch)).delete(synchronize_session=False)
+        db.session.commit()
+
+    return jsonify({"ok": True, "deleted": len(to_delete)})
+
 # --- API: Fix prospect names with dict artifacts ----------------------------
 @app.route("/api/prospects/fix-names", methods=["POST"])
 @require_auth

@@ -557,6 +557,14 @@ function ProspectTable({onSelect}){
         }catch(e){showToast("💀",e.message,"#ef4444");}
       },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-neon"},
         "🔧 Corriger noms"),
+      h("button",{onClick:async()=>{
+        if(!confirm("Supprimer les doublons ? (garde celui avec le plus de donnees)"))return;
+        showToast("⏳","Suppression des doublons...","#a855f7");
+        try{const r=await api("/prospects/remove-duplicates",{method:"POST",body:"{}"});
+          showToast("✅",r.deleted+" doublons supprimes","#00ff88");load();
+        }catch(e){showToast("💀",e.message,"#ef4444");}
+      },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
+        "🗑️ Suppr doublons"),
       h("button",{onClick:toggleHunterAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(hunterAuto?"border-red-500/40 text-red-400":"border-orange-500/40 text-orange-400 hover:border-orange-400")},
         hunterAuto?(hunterCountdown>0?"⏳ "+hunterCountdown+"s":"🔎 En cours..."):"🔎 Hunter.io"+(hunterTotal.credits>0?" ("+hunterTotal.credits+" credits)":"")),
