@@ -529,8 +529,6 @@ function ProspectTable({onSelect}){
         h("option",{value:""},"Toutes villes"),filters.villes.map(v=>h("option",{key:v,value:v},v))),
       h("select",{value:fEmail,onChange:e=>{setFEmail(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
         h("option",{value:""},"Email: tous"),h("option",{value:"with"},"Avec email"),h("option",{value:"without"},"Sans email")),
-      h("select",{value:fChain,onChange:e=>{setFChain(e.target.value);setPage(1);},className:"px-3 py-2.5 border rounded-xl text-sm"},
-        h("option",{value:""},"Franchise: tous"),h("option",{value:"independent"},"🏠 Independants"),h("option",{value:"chain"},"🏢 Franchises")),
       h("button",{onClick:()=>{setSortScore(!sortScore);setPage(1);},
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(sortScore?"border-neon text-neon":"border-gray-700 text-gray-400 hover:border-gray-500")},
         sortScore?"🔥 Score ↓":"🔥 Score"),
@@ -541,36 +539,9 @@ function ProspectTable({onSelect}){
         fetch("/api/export?"+params,{headers:{"Authorization":"Bearer "+TOKEN}})
           .then(r=>r.blob()).then(b=>{const u=URL.createObjectURL(b);const a=document.createElement("a");a.href=u;a.download="prospects.csv";a.click();});
       },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-gray-500"},"📥 CSV"),
-      h("button",{onClick:async()=>{
-        setCleaning(true);
-        try{const r=await api("/clean-demo",{method:"POST",body:JSON.stringify({})});
-          if(r.needConfirm){setCleanPreview(r);showToast("🗑️",r.count+" prospects fake trouves","#ffe600");}
-          else showToast("✅","Aucun fake trouve","#00ff88");
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-        setCleaning(false);
-      },disabled:cleaning,className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
-        cleaning?"Scan...":"🗑️ Nettoyer faux"),
-      h("button",{onClick:async()=>{
-        showToast("🔧","Nettoyage des noms...","#a855f7");
-        try{const r=await api("/prospects/fix-names",{method:"POST",body:"{}"});
-          showToast("✅",r.fixed+" noms corriges","#00ff88");load();
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-      },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-neon"},
-        "🔧 Corriger noms"),
-      h("button",{onClick:async()=>{
-        if(!confirm("Supprimer les doublons ? (garde celui avec le plus de donnees)"))return;
-        showToast("⏳","Suppression des doublons...","#a855f7");
-        try{const r=await api("/prospects/remove-duplicates",{method:"POST",body:"{}"});
-          showToast("✅",r.deleted+" doublons supprimes","#00ff88");load();
-        }catch(e){showToast("💀",e.message,"#ef4444");}
-      },className:"px-3 py-2.5 border border-gray-700 rounded-xl text-sm text-gray-400 hover:border-red-400 hover:text-red-400"},
-        "🗑️ Suppr doublons"),
       h("button",{onClick:toggleHunterAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(hunterAuto?"border-red-500/40 text-red-400":"border-orange-500/40 text-orange-400 hover:border-orange-400")},
         hunterAuto?(hunterCountdown>0?"⏳ "+hunterCountdown+"s":"🔎 En cours..."):"🔎 Hunter.io"+(hunterTotal.credits>0?" ("+hunterTotal.credits+" credits)":"")),
-      h("button",{onClick:toggleFranAuto,
-        className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(franAuto?"border-red-500/40 text-red-400":"border-yellow-500/40 text-yellow-400 hover:border-yellow-400")+(franSearching?" animate-pulse":"")},
-        franAuto?(franSearching?"🏢 Detection...":(franCountdown>0?"⏳ "+franCountdown+"s":"🏢 En cours...")):"🏢 Franchises"),
       h("button",{onClick:toggleWebAuto,
         className:"px-3 py-2.5 border rounded-xl text-sm font-bold "+(webSearchAuto?"border-red-500/40 text-red-400":"border-cyan-500/40 text-cyan-400 hover:border-cyan-400")+(webSearching?" animate-pulse":"")},
         webSearchAuto?(webSearching?"🌐 Recherche sites...":(webCountdown>0?"⏳ "+webCountdown+"s":"🌐 En cours...")):"🌐 Phase 1: Sites web"),

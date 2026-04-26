@@ -80,6 +80,8 @@ def _normalize(text):
     import unicodedata
     return unicodedata.normalize("NFD", text.lower().strip()).encode("ascii", "ignore").decode("ascii")
 
+SKIP_STATUSES = ("replied", "meeting", "converted", "not_interested", "unsubscribed", "bounced")
+
 # Backfill unsubscribe tokens for existing prospects (batched)
 with app.app_context():
     try:
