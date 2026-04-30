@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRM Intelligent + Prospection Automatisée — Cas d'usage Jalunia</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚀</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',sans-serif;background:#0a0e1a;color:#e2e8f0;overflow-x:hidden}
+a{color:#00f0ff;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* Hero */
+.hero{min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:40px 20px;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle at 30% 50%,#00f0ff08,transparent 50%),radial-gradient(circle at 70% 50%,#a855f708,transparent 50%);animation:rotateBg 30s linear infinite}
+@keyframes rotateBg{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+.hero-content{position:relative;z-index:1;max-width:900px}
+.hero h1{font-size:clamp(2.5rem,6vw,4.5rem);font-weight:900;line-height:1.1;margin-bottom:24px}
+.hero h1 span{background:linear-gradient(135deg,#00f0ff,#a855f7);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero p{font-size:1.2rem;color:#94a3b8;max-width:650px;margin:0 auto 40px}
+.hero-stats{display:flex;gap:40px;justify-content:center;flex-wrap:wrap;margin-bottom:48px}
+.hero-stat{text-align:center}
+.hero-stat .num{font-size:2.5rem;font-weight:900;background:linear-gradient(135deg,#00f0ff,#00ff88);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero-stat .label{font-size:0.85rem;color:#64748b;margin-top:4px}
+.cta{display:inline-flex;align-items:center;gap:8px;padding:16px 36px;border-radius:14px;font-weight:700;font-size:1rem;color:#fff;background:linear-gradient(135deg,#00f0ff,#a855f7);box-shadow:0 0 30px #00f0ff30;transition:all .3s}
+.cta:hover{transform:translateY(-2px);box-shadow:0 0 50px #00f0ff50;text-decoration:none}
+.cta-secondary{background:transparent;border:2px solid #1e293b;box-shadow:none;color:#94a3b8}
+.cta-secondary:hover{border-color:#00f0ff;color:#00f0ff;box-shadow:0 0 20px #00f0ff20}
+
+/* Sections */
+section{padding:100px 20px}
+.container{max-width:1100px;margin:0 auto}
+.section-label{display:inline-block;padding:6px 16px;border-radius:100px;font-size:0.75rem;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:16px}
+.section-title{font-size:clamp(2rem,4vw,3rem);font-weight:900;margin-bottom:20px;line-height:1.2}
+.section-desc{font-size:1.1rem;color:#94a3b8;max-width:650px;margin-bottom:48px}
+
+/* Problem */
+.problem{background:#0f1629}
+.problem-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px}
+.problem-card{background:#111827;border:1px solid #1e293b;border-radius:16px;padding:32px;position:relative;overflow:hidden}
+.problem-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#ef4444,#f97316)}
+.problem-card .icon{font-size:2rem;margin-bottom:16px}
+.problem-card h3{font-size:1.1rem;font-weight:700;margin-bottom:8px}
+.problem-card p{color:#94a3b8;font-size:0.9rem;line-height:1.6}
+
+/* Pipeline */
+.pipeline{display:flex;gap:0;align-items:stretch;flex-wrap:wrap;justify-content:center;margin:48px 0}
+.pipe-step{flex:1;min-width:180px;max-width:220px;padding:24px;text-align:center;position:relative;border:1px solid #1e293b;background:#111827;border-radius:16px;margin:8px}
+.pipe-step .step-num{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:0.9rem;margin:0 auto 12px;color:#fff}
+.pipe-step h4{font-size:0.95rem;font-weight:700;margin-bottom:6px}
+.pipe-step p{font-size:0.8rem;color:#94a3b8;line-height:1.5}
+.pipe-arrow{display:flex;align-items:center;color:#1e293b;font-size:1.5rem}
+
+/* Features */
+.features-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:24px}
+.feature-card{background:#111827;border:1px solid #1e293b;border-radius:16px;padding:32px;transition:all .3s}
+.feature-card:hover{border-color:#00f0ff40;box-shadow:0 0 30px #00f0ff10}
+.feature-card .icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.5rem;margin-bottom:16px}
+.feature-card h3{font-size:1.1rem;font-weight:700;margin-bottom:8px}
+.feature-card p{color:#94a3b8;font-size:0.9rem;line-height:1.6}
+.feature-card .tag{display:inline-block;padding:4px 10px;border-radius:6px;font-size:0.7rem;font-weight:700;margin-top:12px}
+
+/* Results */
+.results{background:#0f1629}
+.results-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:24px}
+.result-card{text-align:center;padding:32px;background:#111827;border:1px solid #1e293b;border-radius:16px}
+.result-card .num{font-size:3rem;font-weight:900;line-height:1}
+.result-card .label{font-size:0.9rem;color:#94a3b8;margin-top:8px}
+
+/* Screenshots */
+.screenshots{display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:24px;margin-top:48px}
+.screenshot{border-radius:16px;overflow:hidden;border:1px solid #1e293b;background:#111827}
+.screenshot .title{padding:16px 20px;font-weight:700;font-size:0.9rem;border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:8px}
+.screenshot .body{padding:20px;font-size:0.85rem;color:#94a3b8;line-height:1.8}
+.screenshot .body code{background:#1e293b;padding:2px 8px;border-radius:4px;font-size:0.8rem;color:#00f0ff}
+
+/* Stack */
+.stack-grid{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+.stack-tag{padding:8px 16px;border-radius:10px;font-size:0.85rem;font-weight:600;background:#111827;border:1px solid #1e293b;display:flex;align-items:center;gap:6px}
+
+/* CTA Final */
+.cta-section{text-align:center;padding:120px 20px;position:relative}
+.cta-section::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 50%,#a855f710,transparent 70%)}
+
+/* Footer */
+footer{text-align:center;padding:40px 20px;border-top:1px solid #1e293b;color:#475569;font-size:0.85rem}
+
+@media(max-width:768px){
+  .hero-stats{gap:24px}
+  .pipe-arrow{display:none}
+  .pipeline{flex-direction:column;align-items:center}
+}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-content">
+    <div style="margin-bottom:24px">
+      <span style="padding:8px 20px;border-radius:100px;background:#00f0ff10;color:#00f0ff;font-size:0.85rem;font-weight:600;border:1px solid #00f0ff30">📌 Cas d'usage — Agence IA</span>
+    </div>
+    <h1>CRM intelligent avec<br><span>prospection 100% automatisée</span></h1>
+    <p>Comment nous avons construit un outil sur-mesure qui scrape, enrichit et contacte automatiquement 27 000+ hébergeurs touristiques en France — sans intervention humaine.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="num">27 210</div><div class="label">Prospects importés</div></div>
+      <div class="hero-stat"><div class="num">5</div><div class="label">Sources de données</div></div>
+      <div class="hero-stat"><div class="num">100%</div><div class="label">Automatisé</div></div>
+      <div class="hero-stat"><div class="num">0€</div><div class="label">Coût humain</div></div>
+    </div>
+    <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+      <a href="https://jalunia.com" class="cta">Découvrir Jalunia →</a>
+      <a href="#pipeline" class="cta cta-secondary">Comment ça marche ↓</a>
+    </div>
+  </div>
+</div>
+
+<!-- PROBLÈME -->
+<section class="problem">
+  <div class="container">
+    <span class="section-label" style="background:#ef444420;color:#ef4444">Le problème</span>
+    <h2 class="section-title">La prospection B2B manuelle,<br>c'est fini.</h2>
+    <p class="section-desc">Les commerciaux passent 70% de leur temps à chercher des contacts, copier-coller des emails, et relancer manuellement. Résultat : peu de volume, beaucoup d'efforts, zéro scalabilité.</p>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="icon">🔍</div>
+        <h3>Trouver les prospects</h3>
+        <p>Chercher un par un sur Google, Pages Jaunes, Booking... Des heures pour constituer une liste de 200 contacts.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">📧</div>
+        <h3>Trouver les emails</h3>
+        <p>Aller sur chaque site web, chercher la page contact, noter l'email... Quand il existe.</p>
+      </div>
+      <div class="problem-card">
+        <div class="icon">✉️</div>
+        <h3>Envoyer les emails</h3>
+        <p>Copier-coller le template, personnaliser le nom, envoyer un par un. Puis relancer. Puis re-relancer.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PIPELINE -->
+<section id="pipeline">
+  <div class="container">
+    <span class="section-label" style="background:#00f0ff20;color:#00f0ff">La solution</span>
+    <h2 class="section-title">Un pipeline de prospection<br>entièrement automatisé</h2>
+    <p class="section-desc">De la découverte du prospect à la prise de RDV, chaque étape est automatisée. L'humain n'intervient que pour closer.</p>
+    <div class="pipeline">
+      <div class="pipe-step">
+        <div class="step-num" style="background:linear-gradient(135deg,#3B82F6,#06B6D4)">1</div>
+        <h4>Scraping multi-sources</h4>
+        <p>Google Places, DATAtourisme, data.gouv.fr — 27 000 prospects en quelques clics</p>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num" style="background:linear-gradient(135deg,#8B5CF6,#a855f7)">2</div>
+        <h4>Enrichissement auto</h4>
+        <p>Emails, téléphones, sites web trouvés automatiquement via scraping + Hunter.io</p>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num" style="background:linear-gradient(135deg,#ff00e5,#a855f7)">3</div>
+        <h4>Emails IA personnalisés</h4>
+        <p>Claude AI génère des emails uniques adaptés au type, ville, note Google de chaque prospect</p>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num" style="background:linear-gradient(135deg,#00ff88,#00f0ff)">4</div>
+        <h4>Campagne auto-send</h4>
+        <p>Séquence de 3 emails envoyée automatiquement avec relances intelligentes</p>
+      </div>
+      <div class="pipe-arrow">→</div>
+      <div class="pipe-step">
+        <div class="step-num" style="background:linear-gradient(135deg,#ffe600,#ff6b00)">5</div>
+        <h4>Tracking & closing</h4>
+        <p>Ouvertures trackées, réponses détectées, scoring automatique, RDV planifiés</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FONCTIONNALITÉS -->
+<section class="problem">
+  <div class="container">
+    <span class="section-label" style="background:#a855f720;color:#a855f7">Fonctionnalités</span>
+    <h2 class="section-title">Tout ce qu'on a construit</h2>
+    <p class="section-desc">Un CRM complet développé sur-mesure, pas un SaaS générique. Chaque feature répond à un besoin réel du client.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="icon" style="background:#3B82F620;color:#3B82F6">🔍</div>
+        <h3>Scraping Google Places</h3>
+        <p>Recherche multi-catégories (gîte, chambre d'hôtes, hôtel...) avec déduplication automatique contre la base existante. Compteur de coûts API en temps réel.</p>
+        <span class="tag" style="background:#3B82F620;color:#3B82F6">Google Places API</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#00ff8820;color:#00ff88">🇫🇷</div>
+        <h3>Import DATAtourisme</h3>
+        <p>Connexion directe à l'API nationale du tourisme. 125 000+ hébergements disponibles. Import paginé avec auto-retry.</p>
+        <span class="tag" style="background:#00ff8820;color:#00ff88">API Gratuite</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#a855f720;color:#a855f7">📧</div>
+        <h3>Email Finder 3 phases</h3>
+        <p>Phase 1 : scraping de sites web (mailto, regex, JSON-LD). Phase 2 : vérification SMTP. Phase 3 : Hunter.io en fallback. Boucle automatique avec countdown.</p>
+        <span class="tag" style="background:#a855f720;color:#a855f7">Scraping + Hunter.io</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#ff00e520;color:#ff00e5">🤖</div>
+        <h3>Emails générés par IA</h3>
+        <p>Claude AI génère des séquences de 3 emails uniques par prospect. S'adapte au type d'hébergement, à la ville, à la note Google, à la présence web.</p>
+        <span class="tag" style="background:#ff00e520;color:#ff00e5">Claude AI</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#ffe60020;color:#ffe600">🚀</div>
+        <h3>Campagne auto-send</h3>
+        <p>Moteur d'envoi avec warmup progressif, heures intelligentes (France), vérification MX, blacklist domaines, séquences conditionnelles (ouvert/pas ouvert).</p>
+        <span class="tag" style="background:#ffe60020;color:#ffe600">SMTP + IMAP</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#00f0ff20;color:#00f0ff">📊</div>
+        <h3>Dashboard gamifié</h3>
+        <p>Système XP/niveaux, achievements débloquables, confetti sur les deals closés. KPIs, pipeline, analytics d'ouverture/réponse par email.</p>
+        <span class="tag" style="background:#00f0ff20;color:#00f0ff">Gamification</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#f9731620;color:#f97316">📞</div>
+        <h3>Enrichissement tel + site</h3>
+        <p>Trouve automatiquement les numéros de téléphone et sites web via Google Places Details API ou scraping des pages contact.</p>
+        <span class="tag" style="background:#f9731620;color:#f97316">Multi-sources</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#ef444420;color:#ef4444">🛡️</div>
+        <h3>Protections anti-spam</h3>
+        <p>Validation MX, vérification SMTP RCPT TO, blacklist domaines, warmup progressif (5→30/jour), List-Unsubscribe header, tracking pixel.</p>
+        <span class="tag" style="background:#ef444420;color:#ef4444">Délivrabilité</span>
+      </div>
+      <div class="feature-card">
+        <div class="icon" style="background:#06B6D420;color:#06B6D4">📥</div>
+        <h3>Import universel</h3>
+        <p>Accepte JSON, CSV, Excel. Détecte automatiquement 50+ variantes de noms de colonnes. Import chunké pour fichiers de plusieurs MB.</p>
+        <span class="tag" style="background:#06B6D420;color:#06B6D4">Tous formats</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- RÉSULTATS -->
+<section class="results">
+  <div class="container">
+    <span class="section-label" style="background:#00ff8820;color:#00ff88">Résultats</span>
+    <h2 class="section-title">Ce que ça donne concrètement</h2>
+    <p class="section-desc">Déployé sur Render (free tier), utilisable par un non-technique. Voici les chiffres réels du projet.</p>
+    <div class="results-grid">
+      <div class="result-card">
+        <div class="num" style="color:#00f0ff">27K+</div>
+        <div class="label">Prospects dans la base</div>
+      </div>
+      <div class="result-card">
+        <div class="num" style="color:#a855f7">5</div>
+        <div class="label">Sources de données intégrées</div>
+      </div>
+      <div class="result-card">
+        <div class="num" style="color:#00ff88">Auto</div>
+        <div class="label">Scraping email + tel en boucle</div>
+      </div>
+      <div class="result-card">
+        <div class="num" style="color:#ffe600">3</div>
+        <div class="label">Emails par séquence (IA)</div>
+      </div>
+      <div class="result-card">
+        <div class="num" style="color:#ff00e5">$0</div>
+        <div class="label">Intervention manuelle</div>
+      </div>
+      <div class="result-card">
+        <div class="num" style="color:#f97316">1</div>
+        <div class="label">Semaine de développement</div>
+      </div>
+    </div>
+
+    <!-- Screenshots simulés -->
+    <div class="screenshots">
+      <div class="screenshot">
+        <div class="title">📊 Dashboard</div>
+        <div class="body">
+          Système <code>XP</code> avec niveaux (Débutant → Légende), achievements débloquables, pipeline visuel avec barres neon.
+          <br><br>
+          KPIs temps réel : prospects, emails envoyés, taux d'ouverture, taux de réponse, hot leads (score > 30).
+          <br><br>
+          <strong>Checklist de mise en route</strong> intégrée pour guider les non-tech.
+        </div>
+      </div>
+      <div class="screenshot">
+        <div class="title">🔍 Scraping</div>
+        <div class="body">
+          <strong>Google Places</strong> : multi-catégories, dédup auto, compteur de coûts API ($X/$200)
+          <br><br>
+          <strong>DATAtourisme</strong> : API nationale, 125K+ hébergements, import paginé
+          <br><br>
+          <strong>data.gouv.fr</strong> : import CSV direct, mapping automatique des colonnes
+          <br><br>
+          <strong>Enrichissement</strong> : boucle auto Hunter.io → scraping sites → SMTP verify
+        </div>
+      </div>
+      <div class="screenshot">
+        <div class="title">🚀 Campagne</div>
+        <div class="body">
+          <strong>Templates intelligents</strong> avec variables <code>{nom}</code> <code>{ville}</code> <code>{type}</code>
+          <br><br>
+          <strong>Génération IA</strong> : Claude Haiku crée des emails uniques par prospect (~$0.002/email)
+          <br><br>
+          <strong>Auto-send</strong> : warmup 5→30/jour, heures France, vérification MX, séquences conditionnelles, détection réponses IMAP
+        </div>
+      </div>
+      <div class="screenshot">
+        <div class="title">⚙️ Config</div>
+        <div class="body">
+          Presets SMTP en 1 clic : <code>Gmail</code> <code>Outlook</code> <code>OVH</code> <code>Ionos</code>
+          <br><br>
+          Boutons <strong>"Tester la connexion"</strong> avec feedback vert/rouge instantané
+          <br><br>
+          Aide contextuelle 💡 sur chaque section pour les utilisateurs non-tech
+          <br><br>
+          4 clés API : Google Places, Hunter.io, DATAtourisme, Anthropic
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STACK TECHNIQUE -->
+<section>
+  <div class="container">
+    <span class="section-label" style="background:#06B6D420;color:#06B6D4">Stack technique</span>
+    <h2 class="section-title">Construit pour durer</h2>
+    <p class="section-desc">Pas de dépendances inutiles. Un backend Python solide, un frontend léger, déployé sur infrastructure gratuite.</p>
+    <div class="stack-grid">
+      <div class="stack-tag">🐍 Python / Flask</div>
+      <div class="stack-tag">⚛️ React (vanilla, pas de build)</div>
+      <div class="stack-tag">🐘 PostgreSQL</div>
+      <div class="stack-tag">🎨 Tailwind CSS</div>
+      <div class="stack-tag">🚀 Render (free tier)</div>
+      <div class="stack-tag">🤖 Claude AI (Haiku)</div>
+      <div class="stack-tag">🔍 Google Places API</div>
+      <div class="stack-tag">🔎 Hunter.io API</div>
+      <div class="stack-tag">🇫🇷 DATAtourisme API</div>
+      <div class="stack-tag">📧 SMTP / IMAP</div>
+      <div class="stack-tag">🔐 JWT (custom HMAC-SHA256)</div>
+      <div class="stack-tag">📊 BeautifulSoup</div>
+      <div class="stack-tag">🌐 DNSpython (MX check)</div>
+    </div>
+    <div style="margin-top:48px;padding:32px;background:#111827;border:1px solid #1e293b;border-radius:16px">
+      <h3 style="font-weight:700;margin-bottom:16px">📦 Architecture</h3>
+      <div style="font-family:monospace;font-size:0.85rem;color:#94a3b8;line-height:2">
+        <span style="color:#00f0ff">app.py</span> — Backend Flask (~2800 lignes) : API REST, moteur de campagne, scraping, enrichissement, IA<br>
+        <span style="color:#00f0ff">models.py</span> — 4 modèles : Prospect, EmailLog, CampaignRun, Setting<br>
+        <span style="color:#00f0ff">static/index.html</span> — Frontend React vanilla (~1100 lignes) : UI gamifiée, dark theme neon<br>
+        <span style="color:#00f0ff">render.yaml</span> — Config déploiement : gunicorn, PostgreSQL, env vars<br>
+        <span style="color:#00f0ff">requirements.txt</span> — 9 dépendances Python
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA FINAL -->
+<div class="cta-section">
+  <div style="position:relative;z-index:1">
+    <h2 style="font-size:clamp(2rem,4vw,3rem);font-weight:900;margin-bottom:16px">Vous avez un projet similaire ?</h2>
+    <p style="font-size:1.1rem;color:#94a3b8;max-width:600px;margin:0 auto 40px">CRM sur-mesure, prospection automatisée, scraping intelligent, campagnes IA — on construit votre machine à closer en quelques jours.</p>
+    <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap">
+      <a href="https://jalunia.com" class="cta">Contactez-nous →</a>
+    </div>
+  </div>
+</div>
+
+<footer>
+  © 2026 Jalunia — CRM intelligent & prospection automatisée
+</footer>
+
+</body>
+</html>
